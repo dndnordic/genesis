@@ -6,13 +6,13 @@ on:
       - main
     paths:
       - 'Dockerfile'
-      - '.github/workflows/build.yml'
+      - '.github/workflows/build-genesis.yml'
       - 'genesis/**'
-  workflow_dispatch: # Allow manual triggering
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: self-hosted # Runs on the Origin runner
+    runs-on: self-hosted # Uses the Origin runner
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -23,7 +23,7 @@ jobs:
 
       - name: Build Genesis Docker Image
         run: |
-          docker build -t ghcr.io/org/genesis:latest -f Dockerfile.genesis .
+          docker build -t ghcr.io/org/genesis:latest .
 
       - name: Push Image to Registry
         run: |

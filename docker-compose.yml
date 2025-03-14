@@ -1,0 +1,10 @@
+- name: Set Environment Variables
+  run: |
+    echo "ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}" >> $GITHUB_ENV
+
+- name: Create .env File
+  run: |
+    echo "DB_USER=${{ secrets.DB_USER }}" >> .env
+    echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+    echo "API_KEY=${{ secrets.API_KEY }}" >> .env
+    echo "ENVIRONMENT=$ENVIRONMENT" >> .env

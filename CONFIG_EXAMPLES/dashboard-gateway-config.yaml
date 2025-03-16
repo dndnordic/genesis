@@ -1,0 +1,271 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-gateway-config
+  namespace: origin-system
+data:
+  routes.json: |
+    {
+      "routes": [
+        {
+          "path": "/api/v1/requirements/**",
+          "target": "http://requirements-service:8080/api/v1",
+          "stripPrefix": "/api/v1/requirements",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/documentation/**",
+          "target": "http://documentation-service:8080/api/v1",
+          "stripPrefix": "/api/v1/documentation",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/documentation/collaborate",
+          "target": "ws://documentation-service:8080/api/v1/collaborate",
+          "isWebsocket": true
+        },
+        {
+          "path": "/api/v1/architecture/**",
+          "target": "http://architecture-service:8080/api/v1",
+          "stripPrefix": "/api/v1/architecture",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/templates/**",
+          "target": "http://templates-service:8080/api/v1",
+          "stripPrefix": "/api/v1/templates",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/ai/requirements/**",
+          "target": "http://ai-assistant:8080/api/v1/requirements",
+          "methods": ["POST"]
+        },
+        {
+          "path": "/api/v1/ai/documentation/**",
+          "target": "http://ai-assistant:8080/api/v1/documentation",
+          "methods": ["POST"]
+        },
+        {
+          "path": "/api/v1/ai/architecture/**",
+          "target": "http://ai-assistant:8080/api/v1/architecture",
+          "methods": ["POST"]
+        }
+      ]
+    }
+---
+# Requirements Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: requirements-service
+  namespace: origin-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: requirements-service
+  template:
+    metadata:
+      labels:
+        app: requirements-service
+    spec:
+      containers:
+      - name: requirements-api
+        image: dndnordic/requirements-service:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgresql.origin-system.svc.cluster.local"
+        - name: DB_DATABASE
+          value: "requirements"
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: requirements-db-credentials
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: requirements-db-credentials
+              key: password
+        volumeMounts:
+        - name: requirements-config
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: requirements-config
+        configMap:
+          name: requirements-service-config
+
+---
+# Requirements Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: requirements-service
+  namespace: origin-system
+spec:
+  selector:
+    app: requirements-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# Documentation Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: documentation-service
+  namespace: origin-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: documentation-service
+  template:
+    metadata:
+      labels:
+        app: documentation-service
+    spec:
+      containers:
+      - name: documentation-api
+        image: dndnordic/documentation-service:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgresql.origin-system.svc.cluster.local"
+        - name: DB_DATABASE
+          value: "documentation"
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: documentation-db-credentials
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: documentation-db-credentials
+              key: password
+        - name: MINIO_ENDPOINT
+          value: "minio.origin-system.svc.cluster.local:9000"
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: documentation-minio-credentials
+              key: access-key
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: documentation-minio-credentials
+              key: secret-key
+        - name: MINIO_BUCKET
+          value: "documentation"
+        volumeMounts:
+        - name: documentation-config
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: documentation-config
+        configMap:
+          name: documentation-service-config
+
+---
+# Documentation Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: documentation-service
+  namespace: origin-system
+spec:
+  selector:
+    app: documentation-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# AI Assistant Service for Requirements and Documentation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-assistant
+  namespace: origin-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-assistant
+  template:
+    metadata:
+      labels:
+        app: ai-assistant
+    spec:
+      containers:
+      - name: ai-api
+        image: dndnordic/ai-assistant:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MODEL_ENDPOINT
+          value: "sentry-llm.origin-system.svc.cluster.local:8000"
+        - name: CONTEXT_STORE_HOST
+          value: "postgresql.origin-system.svc.cluster.local"
+        - name: CONTEXT_STORE_DATABASE
+          value: "ai_context"
+        - name: CONTEXT_STORE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: ai-assistant-db-credentials
+              key: username
+        - name: CONTEXT_STORE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-assistant-db-credentials
+              key: password
+        volumeMounts:
+        - name: ai-assistant-config
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+      volumes:
+      - name: ai-assistant-config
+        configMap:
+          name: ai-assistant-config
+
+---
+# AI Assistant Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-assistant
+  namespace: origin-system
+spec:
+  selector:
+    app: ai-assistant
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP

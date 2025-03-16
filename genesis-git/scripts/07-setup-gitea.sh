@@ -6,7 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/configs/settings.conf"
 
 # Check if Gitea is already installed
-if [ -f "/usr/local/bin/gitea" ]; then
+mkdir -p $BASE_PATH/gitea/bin
+GITEA_BIN="$BASE_PATH/gitea/bin/gitea"
+
+if [ -f "$GITEA_BIN" ]; then
     echo "Gitea is already installed, skipping download..."
 else
     # Install Gitea
@@ -15,15 +18,18 @@ else
     
     # Check if wget is installed, if not try curl
     if command -v wget &> /dev/null; then
-        wget -O /usr/local/bin/gitea https://dl.gitea.io/gitea/${GITEA_VERSION}/gitea-${GITEA_VERSION}-linux-amd64
+        wget -O "$GITEA_BIN" https://dl.gitea.io/gitea/${GITEA_VERSION}/gitea-${GITEA_VERSION}-linux-amd64
     elif command -v curl &> /dev/null; then
-        curl -L https://dl.gitea.io/gitea/${GITEA_VERSION}/gitea-${GITEA_VERSION}-linux-amd64 -o /usr/local/bin/gitea
+        curl -L https://dl.gitea.io/gitea/${GITEA_VERSION}/gitea-${GITEA_VERSION}-linux-amd64 -o "$GITEA_BIN"
     else
         echo "Error: Neither wget nor curl is installed. Please install one of them and try again."
         exit 1
     fi
     
-    chmod +x /usr/local/bin/gitea
+    chmod +x "$GITEA_BIN"
+    
+    # Create symlink for backward compatibility
+    ln -sf "$GITEA_BIN" /usr/local/bin/gitea
 fi
 
 # Create Gitea configuration file
@@ -32,6 +38,7 @@ cat > $BASE_PATH/gitea/config/app.ini << EOF
 APP_NAME = Genesis Git Server
 RUN_USER = gitea
 RUN_MODE = prod
+WORK_PATH = $BASE_PATH/gitea
 
 [database]
 DB_TYPE = postgres
@@ -57,6 +64,7 @@ START_SSH_SERVER = false
 SSH_DOMAIN = $DOMAIN
 LFS_START_SERVER = true
 LFS_JWT_SECRET = $(openssl rand -base64 32)
+APP_DATA_PATH = $BASE_PATH/gitea/data
 
 [security]
 INSTALL_LOCK = true
@@ -79,6 +87,8 @@ EOF
 
 # Create required directories if they don't exist
 mkdir -p $BASE_PATH/gitea/data/gitea-repositories
+mkdir -p $BASE_PATH/gitea/data/tmp/package-upload
+mkdir -p $BASE_PATH/gitea/data/home
 mkdir -p $BASE_PATH/gitea/logs
 
 # Set proper ownership

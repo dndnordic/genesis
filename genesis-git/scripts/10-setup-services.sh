@@ -17,7 +17,7 @@ User=gitea
 Group=gitea
 WorkingDirectory=$BASE_PATH/gitea/
 Environment=USER=gitea HOME=$BASE_PATH/gitea GITEA_WORK_DIR=$BASE_PATH/gitea
-ExecStart=/usr/local/bin/gitea web --config $BASE_PATH/gitea/config/app.ini
+ExecStart=$BASE_PATH/gitea/bin/gitea web --config $BASE_PATH/gitea/config/app.ini
 Restart=always
 RestartSec=2s
 Type=simple

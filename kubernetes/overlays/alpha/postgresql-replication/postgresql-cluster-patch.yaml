@@ -1,0 +1,17 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgresql-cluster
+spec:
+  instances: 3
+  bootstrap:
+    initdb:
+      database: origin
+      owner: origin
+      secret:
+        name: origin-db-credentials
+  affinity:
+    nodeSelector:
+      kubernetes.io/hostname: alpha-worker-1
+      kubernetes.io/hostname: alpha-worker-2
+      kubernetes.io/hostname: alpha-worker-3

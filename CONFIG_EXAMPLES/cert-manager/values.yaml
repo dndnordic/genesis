@@ -1,0 +1,50 @@
+# cert-manager configuration with internal CA
+
+# Installation namespace
+global:
+  leaderElection:
+    namespace: cert-manager
+
+prometheus:
+  enabled: true
+  servicemonitor:
+    enabled: true
+
+# Internal CA configuration - this is what we're using for all services
+internalCA:
+  enabled: true
+  secretName: internal-ca-key-pair
+  trustConfigMap: ca-trust-bundle
+  issuerName: internal-ca
+
+# Settings for Let's Encrypt integration (only for public-facing services)
+# Note: We're using internal CA for all services, but keeping this config for reference
+clusterIssuers:
+  - name: letsencrypt-staging
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: "admin@dndnordic.se"
+    privateKeySecretRef:
+      name: letsencrypt-staging
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+          
+  - name: letsencrypt-prod
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: "admin@dndnordic.se"
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+# Resource limits
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi

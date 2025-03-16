@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: origin-system
+bases:
+- ../../../base/keycloak
+patchesStrategicMerge:
+- statefulset-patch.yaml
+- ingress-patch.yaml
+secretGenerator:
+- name: keycloak-admin
+  type: Opaque
+  literals:
+  - username=admin
+  - password=ADMIN_PASSWORD_PLACEHOLDER
+- name: keycloak-postgresql
+  type: Opaque
+  literals:
+  - username=postgres
+  - password=POSTGRES_PASSWORD_PLACEHOLDER
+- name: azure-storage
+  type: Opaque
+  literals:
+  - account-name=AZURE_ACCOUNT_NAME_PLACEHOLDER
+  - access-key=AZURE_ACCESS_KEY_PLACEHOLDER

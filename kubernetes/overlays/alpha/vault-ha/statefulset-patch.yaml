@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - vault
+            topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - alpha-worker-1
+                - alpha-worker-2
+                - alpha-worker-3

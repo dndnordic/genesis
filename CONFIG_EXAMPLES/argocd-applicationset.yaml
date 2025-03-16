@@ -1,0 +1,97 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: singularity-production
+  namespace: argocd
+spec:
+  generators:
+  - matrix:
+      generators:
+      - clusters:
+          selector:
+            matchLabels:
+              environment: production
+      - list:
+          elements:
+          - cluster: alpha
+            url: https://kubernetes.default.svc
+          - cluster: beta
+            url: https://kubernetes.beta.svc
+          - cluster: gamma
+            url: https://kubernetes.gamma.svc
+  template:
+    metadata:
+      name: 'singularity-{{cluster}}'
+      labels:
+        environment: production
+    spec:
+      project: singularity
+      source:
+        repoURL: 'https://github.com/dndnordic/genesis.git'
+        targetRevision: main
+        path: 'clusters/{{cluster}}/singularity-system'
+      destination:
+        server: '{{url}}'
+        namespace: singularity-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        - PruneLast=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: origin-production
+  namespace: argocd
+spec:
+  generators:
+  - matrix:
+      generators:
+      - clusters:
+          selector:
+            matchLabels:
+              environment: production
+      - list:
+          elements:
+          - cluster: alpha
+            url: https://kubernetes.default.svc
+          - cluster: beta
+            url: https://kubernetes.beta.svc
+          - cluster: gamma
+            url: https://kubernetes.gamma.svc
+  template:
+    metadata:
+      name: 'origin-{{cluster}}'
+      labels:
+        environment: production
+    spec:
+      project: origin
+      source:
+        repoURL: 'https://github.com/dndnordic/genesis.git'
+        targetRevision: main
+        path: 'clusters/{{cluster}}/origin-system'
+      destination:
+        server: '{{url}}'
+        namespace: origin-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        - PruneLast=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

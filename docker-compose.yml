@@ -1,10 +1,45 @@
-- name: Set Environment Variables
-  run: |
-    echo "ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}" >> $GITHUB_ENV
+version: '3.8'
 
-- name: Create .env File
-  run: |
-    echo "DB_USER=${{ secrets.DB_USER }}" >> .env
-    echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
-    echo "API_KEY=${{ secrets.API_KEY }}" >> .env
-    echo "ENVIRONMENT=$ENVIRONMENT" >> .env
+services:
+  # Main builder service - Genesis
+  genesis-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./src:/app/src
+      - ./configs:/app/configs
+      - ./kubernetes:/app/kubernetes
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      # API keys for LLM access
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Database configuration
+      - DB_USER=${DB_USER_PROD}
+      - DB_PASSWORD=${DB_PASSWORD_PROD}
+      - DB_HOST=${DB_HOST_PROD:-timescaledb}
+    networks:
+      - genesis-network
+    restart: unless-stopped
+
+  # Registry service for storing container images
+  registry:
+    image: registry:2
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+    networks:
+      - genesis-network
+    restart: unless-stopped
+
+networks:
+  genesis-network:
+    driver: bridge
+
+volumes:
+  registry-data:

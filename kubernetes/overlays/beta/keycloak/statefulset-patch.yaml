@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keycloak
+spec:
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: beta-worker-1
+      containers:
+      - name: keycloak
+        env:
+        - name: KC_HOSTNAME
+          value: "keycloak.beta.origin-system.svc.cluster.local"
+        - name: KEYCLOAK_FRONTEND_URL
+          value: "https://keycloak.beta.origin-system.svc.cluster.local/auth"
+        - name: KEYCLOAK_PRODUCTION_MODE
+          value: "true"

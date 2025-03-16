@@ -1,0 +1,478 @@
+# Mikael's Central Dashboard
+# Consolidated web interface for all tasks, chats, and approvals
+
+---
+# Mikael Dashboard Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mikael-dashboard
+  namespace: origin-system
+  labels:
+    app: mikael-dashboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mikael-dashboard
+  template:
+    metadata:
+      labels:
+        app: mikael-dashboard
+    spec:
+      containers:
+      - name: dashboard
+        image: dndnordic/mikael-dashboard:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: API_BASE_URL
+          value: "http://dashboard-gateway:8080"
+        - name: ORIGIN_API_URL
+          value: "http://origin-api-gateway:8080"
+        - name: SINGULARITY_API_URL
+          value: "http://singularity-api.singularity-system.svc.cluster.local:8080"
+        - name: SENTRY_LLM_API_URL
+          value: "http://sentry-llm.origin-system.svc.cluster.local:8080"
+        - name: TELEGRAM_BRIDGE_URL
+          value: "http://integrated-telegram-bot:8080"
+        - name: WEBSOCKET_URL
+          value: "ws://dashboard-gateway:8080/ws"
+        - name: AUTH_PROVIDER_URL
+          value: "http://keycloak.origin-system.svc.cluster.local:8080/auth"
+        - name: AUTH_CLIENT_ID
+          value: "mikael-dashboard"
+        volumeMounts:
+        - name: dashboard-config
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: dashboard-config
+        configMap:
+          name: dashboard-config
+
+---
+# Dashboard Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mikael-dashboard
+  namespace: origin-system
+spec:
+  selector:
+    app: mikael-dashboard
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: ClusterIP
+
+---
+# Dashboard Config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-config
+  namespace: origin-system
+data:
+  config.json: |
+    {
+      "theme": {
+        "primaryColor": "#0066cc",
+        "secondaryColor": "#6c757d",
+        "accentColor": "#ff9900",
+        "dangerColor": "#dc3545",
+        "successColor": "#28a745",
+        "warningColor": "#ffc107",
+        "darkMode": true,
+        "systemColors": {
+          "origin": "#0066cc",
+          "singularity": "#9900cc",
+          "sentry": "#cc0000"
+        }
+      },
+      "layout": {
+        "defaultView": "dashboard",
+        "sidebar": true,
+        "notifications": true,
+        "chatPanel": true,
+        "mobileFriendly": true
+      },
+      "sections": [
+        {
+          "id": "overview",
+          "name": "Overview",
+          "icon": "dashboard",
+          "default": true
+        },
+        {
+          "id": "approvals",
+          "name": "Approvals & Tasks",
+          "icon": "check-square",
+          "badge": "count"
+        },
+        {
+          "id": "chat",
+          "name": "Conversations",
+          "icon": "message-circle"
+        },
+        {
+          "id": "monitoring",
+          "name": "System Status",
+          "icon": "activity"
+        },
+        {
+          "id": "settings",
+          "name": "Settings",
+          "icon": "settings"
+        }
+      ],
+      "widgets": {
+        "overview": [
+          {
+            "type": "pending-approvals",
+            "title": "Pending Approvals",
+            "refreshInterval": 60000,
+            "limit": 5
+          },
+          {
+            "type": "system-status",
+            "title": "System Status",
+            "refreshInterval": 30000
+          },
+          {
+            "type": "recent-alerts",
+            "title": "Recent Alerts",
+            "refreshInterval": 60000,
+            "limit": 5
+          },
+          {
+            "type": "singularity-status",
+            "title": "Singularity Status",
+            "refreshInterval": 60000
+          }
+        ],
+        "approvals": [
+          {
+            "type": "approval-list",
+            "title": "Pending Approvals",
+            "filters": true,
+            "actionButtons": true
+          },
+          {
+            "type": "task-list",
+            "title": "Tasks",
+            "filters": true,
+            "actionButtons": true
+          },
+          {
+            "type": "recent-activity",
+            "title": "Recent Activity",
+            "limit": 20
+          }
+        ]
+      },
+      "chat": {
+        "systems": ["origin", "singularity", "sentry"],
+        "defaultSystem": "origin",
+        "historyLength": 100,
+        "features": {
+          "fileAttachments": true,
+          "codeHighlighting": true,
+          "imagePreview": true,
+          "markdown": true
+        }
+      },
+      "notifications": {
+        "desktop": true,
+        "sound": true,
+        "browser": true,
+        "telegram": true,
+        "email": {
+          "enabled": true,
+          "criticalOnly": true
+        }
+      },
+      "security": {
+        "sessionTimeout": 3600000,
+        "requireMFA": true,
+        "yubiKeySupport": true
+      }
+    }
+  dashboard-layout.json: |
+    {
+      "overview": {
+        "layout": [
+          { "w": 6, "h": 4, "x": 0, "y": 0, "i": "pending-approvals", "minW": 3, "minH": 2 },
+          { "w": 6, "h": 4, "x": 6, "y": 0, "i": "system-status", "minW": 3, "minH": 2 },
+          { "w": 6, "h": 4, "x": 0, "y": 4, "i": "recent-alerts", "minW": 3, "minH": 2 },
+          { "w": 6, "h": 4, "x": 6, "y": 4, "i": "singularity-status", "minW": 3, "minH": 2 }
+        ]
+      },
+      "approvals": {
+        "layout": [
+          { "w": 12, "h": 6, "x": 0, "y": 0, "i": "approval-list", "minW": 6, "minH": 3 },
+          { "w": 8, "h": 6, "x": 0, "y": 6, "i": "task-list", "minW": 4, "minH": 3 },
+          { "w": 4, "h": 6, "x": 8, "y": 6, "i": "recent-activity", "minW": 2, "minH": 3 }
+        ]
+      },
+      "chat": {
+        "layout": [
+          { "w": 3, "h": 12, "x": 0, "y": 0, "i": "chat-systems", "minW": 2, "minH": 6 },
+          { "w": 9, "h": 12, "x": 3, "y": 0, "i": "chat-window", "minW": 6, "minH": 6 }
+        ]
+      },
+      "monitoring": {
+        "layout": [
+          { "w": 12, "h": 3, "x": 0, "y": 0, "i": "status-overview", "minW": 6, "minH": 2 },
+          { "w": 6, "h": 9, "x": 0, "y": 3, "i": "cluster-status", "minW": 3, "minH": 4 },
+          { "w": 6, "h": 9, "x": 6, "y": 3, "i": "service-status", "minW": 3, "minH": 4 }
+        ]
+      }
+    }
+
+---
+# Dashboard Gateway API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-gateway
+  namespace: origin-system
+  labels:
+    app: dashboard-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dashboard-gateway
+  template:
+    metadata:
+      labels:
+        app: dashboard-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: dndnordic/dashboard-gateway:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ORIGIN_API_URL
+          value: "http://origin-api-gateway:8080"
+        - name: SINGULARITY_API_URL
+          value: "http://singularity-api.singularity-system.svc.cluster.local:8080"
+        - name: SENTRY_API_URL
+          value: "http://sentry-llm.origin-system.svc.cluster.local:8080"
+        - name: GOVERNANCE_API_URL
+          value: "http://governance-service:8080"
+        - name: RECOVERY_API_URL
+          value: "http://recovery-service:8080"
+        - name: TELEGRAM_API_URL
+          value: "http://integrated-telegram-bot:8080"
+        - name: AUTH_ENABLED
+          value: "true"
+        - name: AUTH_SERVER_URL
+          value: "http://keycloak.origin-system.svc.cluster.local:8080/auth"
+        - name: AUTH_REALM
+          value: "origin"
+        - name: AUTH_CLIENT_ID
+          value: "dashboard-gateway"
+        - name: AUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: dashboard-gateway-secrets
+              key: auth-client-secret
+        volumeMounts:
+        - name: gateway-config
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: gateway-config
+        configMap:
+          name: dashboard-gateway-config
+
+---
+# Dashboard Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-gateway
+  namespace: origin-system
+spec:
+  selector:
+    app: dashboard-gateway
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# Dashboard Gateway Config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-gateway-config
+  namespace: origin-system
+data:
+  routes.json: |
+    {
+      "routes": [
+        {
+          "path": "/api/v1/approvals/**",
+          "target": "http://governance-service:8080/api/v1/approvals",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/tasks/**",
+          "target": "http://governance-service:8080/api/v1/tasks",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/origin/**",
+          "target": "http://origin-api-gateway:8080/api/v1",
+          "stripPrefix": "/api/v1/origin",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/singularity/**",
+          "target": "http://singularity-api.singularity-system.svc.cluster.local:8080/api/v1",
+          "stripPrefix": "/api/v1/singularity",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/sentry/**",
+          "target": "http://sentry-llm.origin-system.svc.cluster.local:8080/api/v1",
+          "stripPrefix": "/api/v1/sentry",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/chat/**",
+          "target": "http://integrated-telegram-bot:8080/api/chat",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/status",
+          "target": "http://service-discovery:8080/api/v1/services",
+          "methods": ["GET"]
+        },
+        {
+          "path": "/ws",
+          "target": "http://notification-service:8080/ws",
+          "isWebsocket": true
+        }
+      ],
+      "security": {
+        "enableCSRF": true,
+        "enableXSS": true,
+        "enableHSTS": true,
+        "allowedOrigins": ["https://admin.dndnordic.com"],
+        "authRequired": true
+      }
+    }
+
+---
+# Ingress for Dashboard
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mikael-dashboard-ingress
+  namespace: origin-system
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: internal-ca
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  rules:
+  - host: admin.origin.internal
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mikael-dashboard
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - admin.origin.internal
+    secretName: mikael-dashboard-tls
+
+---
+# PersistentVolumeClaim for dashboard data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mikael-dashboard-data
+  namespace: origin-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# RBAC for Dashboard
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mikael-dashboard
+  namespace: origin-system
+
+---
+# Dashboard needs access to multiple services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mikael-dashboard-role
+rules:
+- apiGroups: [""]
+  resources: ["services", "pods", "configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["prometheusrules", "servicemonitors"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates", "clusterissuers"]
+  verbs: ["get", "list", "watch"]
+
+---
+# Bind the role to the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mikael-dashboard-binding
+subjects:
+- kind: ServiceAccount
+  name: mikael-dashboard
+  namespace: origin-system
+roleRef:
+  kind: ClusterRole
+  name: mikael-dashboard-role
+  apiGroup: rbac.authorization.k8s.io

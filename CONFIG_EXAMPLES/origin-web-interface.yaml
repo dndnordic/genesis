@@ -1,0 +1,406 @@
+# Origin Web Interface Configuration
+# Provides a web-based dashboard for managing Origin and Singularity
+
+---
+# Web UI Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: origin-web-ui
+  namespace: origin-system
+  labels:
+    app: origin-web-ui
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: origin-web-ui
+  template:
+    metadata:
+      labels:
+        app: origin-web-ui
+    spec:
+      containers:
+      - name: web-ui
+        image: dndnordic/origin-web-ui:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: API_BASE_URL
+          value: "http://origin-api-gateway:8080"
+        - name: GOVERNANCE_API_URL
+          value: "http://governance-service:8080"
+        - name: RECOVERY_API_URL
+          value: "http://recovery-service:8080"
+        - name: AUTH_PROVIDER_URL
+          value: "http://keycloak.origin-system.svc.cluster.local:8080/auth"
+        - name: AUTH_CLIENT_ID
+          value: "origin-web"
+        volumeMounts:
+        - name: ui-config
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: ui-config
+        configMap:
+          name: web-ui-config
+
+---
+# Web UI Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: origin-web-ui
+  namespace: origin-system
+spec:
+  selector:
+    app: origin-web-ui
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: ClusterIP
+
+---
+# Web UI ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-ui-config
+  namespace: origin-system
+data:
+  config.json: |
+    {
+      "theme": {
+        "primaryColor": "#0066cc",
+        "secondaryColor": "#6c757d",
+        "accentColor": "#ff9900",
+        "dangerColor": "#dc3545",
+        "successColor": "#28a745",
+        "warningColor": "#ffc107",
+        "darkMode": true
+      },
+      "features": {
+        "singularityMonitoring": true,
+        "advancedControls": true,
+        "auditLog": true,
+        "metrics": true,
+        "alerting": true,
+        "emergencyRecovery": true
+      },
+      "navigation": [
+        {
+          "name": "Dashboard",
+          "icon": "dashboard",
+          "path": "/dashboard",
+          "requiredRole": "viewer"
+        },
+        {
+          "name": "Singularity",
+          "icon": "memory",
+          "path": "/singularity",
+          "requiredRole": "viewer",
+          "children": [
+            {
+              "name": "Status",
+              "path": "/singularity/status",
+              "requiredRole": "viewer"
+            },
+            {
+              "name": "Logs",
+              "path": "/singularity/logs",
+              "requiredRole": "developer"
+            },
+            {
+              "name": "Deployments",
+              "path": "/singularity/deployments",
+              "requiredRole": "developer"
+            },
+            {
+              "name": "Code Review",
+              "path": "/singularity/code-review",
+              "requiredRole": "reviewer"
+            }
+          ]
+        },
+        {
+          "name": "Services",
+          "icon": "cloud",
+          "path": "/services",
+          "requiredRole": "viewer",
+          "children": [
+            {
+              "name": "Keycloak",
+              "path": "/services/keycloak",
+              "requiredRole": "admin"
+            },
+            {
+              "name": "MinIO",
+              "path": "/services/minio",
+              "requiredRole": "admin"
+            },
+            {
+              "name": "PostgreSQL",
+              "path": "/services/postgresql",
+              "requiredRole": "admin"
+            },
+            {
+              "name": "Vault",
+              "path": "/services/vault",
+              "requiredRole": "admin"
+            }
+          ]
+        },
+        {
+          "name": "Monitoring",
+          "icon": "activity",
+          "path": "/monitoring",
+          "requiredRole": "viewer",
+          "children": [
+            {
+              "name": "Metrics",
+              "path": "/monitoring/metrics",
+              "requiredRole": "viewer"
+            },
+            {
+              "name": "Alerts",
+              "path": "/monitoring/alerts",
+              "requiredRole": "viewer"
+            },
+            {
+              "name": "Logs",
+              "path": "/monitoring/logs",
+              "requiredRole": "viewer"
+            }
+          ]
+        },
+        {
+          "name": "Administration",
+          "icon": "settings",
+          "path": "/admin",
+          "requiredRole": "admin",
+          "children": [
+            {
+              "name": "Users",
+              "path": "/admin/users",
+              "requiredRole": "admin"
+            },
+            {
+              "name": "Backup & Restore",
+              "path": "/admin/backup",
+              "requiredRole": "admin"
+            },
+            {
+              "name": "Emergency Recovery",
+              "path": "/admin/recovery",
+              "requiredRole": "admin"
+            }
+          ]
+        }
+      ],
+      "api": {
+        "timeout": 30000,
+        "retryCount": 3,
+        "retryDelay": 1000
+      },
+      "metrics": {
+        "refreshInterval": 30000,
+        "defaultTimeRange": "1h"
+      }
+    }
+
+---
+# API Gateway for Web UI
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: origin-api-gateway
+  namespace: origin-system
+  labels:
+    app: origin-api-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: origin-api-gateway
+  template:
+    metadata:
+      labels:
+        app: origin-api-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: dndnordic/origin-api-gateway:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: GOVERNANCE_SERVICE_URL
+          value: "http://governance-service:8080"
+        - name: RECOVERY_SERVICE_URL
+          value: "http://recovery-service:8080"
+        - name: NOTIFICATION_SERVICE_URL
+          value: "http://notification-service:8080"
+        - name: AUTH_ENABLED
+          value: "true"
+        - name: AUTH_SERVER_URL
+          value: "http://keycloak.origin-system.svc.cluster.local:8080/auth"
+        - name: AUTH_REALM
+          value: "origin"
+        - name: AUTH_CLIENT_ID
+          value: "origin-api-gateway"
+        - name: AUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: api-gateway-secrets
+              key: auth-client-secret
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: gateway-config
+          mountPath: /app/config
+      volumes:
+      - name: gateway-config
+        configMap:
+          name: api-gateway-config
+
+---
+# API Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: origin-api-gateway
+  namespace: origin-system
+spec:
+  selector:
+    app: origin-api-gateway
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# API Gateway ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  namespace: origin-system
+data:
+  routes.json: |
+    {
+      "routes": [
+        {
+          "path": "/api/v1/singularity/**",
+          "target": "http://service-discovery:8080",
+          "requiredRole": "viewer",
+          "methods": ["GET"]
+        },
+        {
+          "path": "/api/v1/singularity/**",
+          "target": "http://service-discovery:8080",
+          "requiredRole": "admin",
+          "methods": ["POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/governance/**",
+          "target": "http://governance-service:8080",
+          "requiredRole": "reviewer",
+          "methods": ["GET"]
+        },
+        {
+          "path": "/api/v1/governance/**",
+          "target": "http://governance-service:8080",
+          "requiredRole": "admin",
+          "methods": ["POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/recovery/status",
+          "target": "http://recovery-service:8080/api/status",
+          "requiredRole": "viewer",
+          "methods": ["GET"]
+        },
+        {
+          "path": "/api/v1/recovery/**",
+          "target": "http://recovery-service:8080",
+          "requiredRole": "admin",
+          "methods": ["GET", "POST", "PUT", "DELETE"]
+        },
+        {
+          "path": "/api/v1/metrics/**",
+          "target": "http://monitoring-service:8080",
+          "requiredRole": "viewer",
+          "methods": ["GET"]
+        },
+        {
+          "path": "/api/v1/services",
+          "target": "http://service-discovery:8080/api/v1/services",
+          "requiredRole": "viewer",
+          "methods": ["GET"]
+        }
+      ],
+      "rateLimit": {
+        "windowMs": 60000,
+        "max": 100,
+        "standardHeaders": true
+      },
+      "cors": {
+        "origin": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allowedHeaders": ["Content-Type", "Authorization"]
+      },
+      "security": {
+        "enableCSRF": true,
+        "enableXSS": true,
+        "enableHSTS": true
+      }
+    }
+
+---
+# Ingress for Web UI
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: origin-web-ui-ingress
+  namespace: origin-system
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: internal-ca
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  rules:
+  - host: admin.origin.internal
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: origin-web-ui
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - admin.origin.internal
+    secretName: origin-web-ui-tls

@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: origin-system
+bases:
+- ../../../base/postgresql-replication
+patchesStrategicMerge:
+- postgresql-cluster-patch.yaml
+secretGenerator:
+- name: postgresql-replication
+  type: Opaque
+  literals:
+  - password=REPLICATION_PASSWORD_PLACEHOLDER
+- name: aws-creds
+  type: Opaque
+  literals:
+  - ACCESS_KEY_ID=AWS_ACCESS_KEY_ID_PLACEHOLDER
+  - ACCESS_SECRET_KEY=AWS_SECRET_ACCESS_KEY_PLACEHOLDER

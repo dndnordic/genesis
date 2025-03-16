@@ -1,0 +1,86 @@
+{
+  "auth_keys": [
+    {
+      "name": "origin-server",
+      "expiry": 7776000,
+      "tags": "tag:origin,tag:server"
+    },
+    {
+      "name": "singularity-server",
+      "expiry": 7776000,
+      "tags": "tag:singularity,tag:server"
+    },
+    {
+      "name": "mikki-bunker",
+      "expiry": 31536000,
+      "tags": "tag:admin,tag:llm"
+    },
+    {
+      "name": "linux-builder",
+      "expiry": 31536000,
+      "tags": "tag:admin,tag:builder"
+    },
+    {
+      "name": "genesis-admin",
+      "expiry": 31536000,
+      "tags": "tag:admin,tag:genesis"
+    }
+  ],
+  "devices": [
+    {
+      "name": "mikki-bunker",
+      "id": "1234abc",
+      "tags": "tag:admin,tag:llm",
+      "action": "info"
+    },
+    {
+      "name": "linux-builder",
+      "id": "5678def",
+      "tags": "tag:admin,tag:builder",
+      "action": "info"
+    },
+    {
+      "name": "origin-prod-server",
+      "id": "abcd1234",
+      "tags": "tag:origin,tag:server",
+      "action": "tag"
+    },
+    {
+      "name": "genesis-admin",
+      "id": "9876xyz",
+      "tags": "tag:admin,tag:genesis",
+      "action": "info"
+    }
+  ],
+  "acl": {
+    "groups": {
+      "group:admin": ["tag:admin"],
+      "group:servers": ["tag:server"],
+      "group:llm": ["tag:llm"],
+      "group:builders": ["tag:builder"],
+      "group:genesis": ["tag:genesis"]
+    },
+    "acls": [
+      {
+        "action": "accept",
+        "users": ["group:admin"],
+        "ports": ["*:*"]
+      },
+      {
+        "action": "accept",
+        "users": ["group:servers"],
+        "ports": ["group:admin:*"]
+      },
+      {
+        "action": "accept",
+        "users": ["group:servers"],
+        "ports": ["group:servers:443", "group:servers:8000"]
+      },
+      {
+        "action": "accept",
+        "users": ["group:admin", "group:servers"],
+        "ports": ["group:llm:8000"]
+      }
+    ]
+  }
+}

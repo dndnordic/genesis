@@ -1,0 +1,77 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgresql-cluster
+spec:
+  instances: 3
+  
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      shared_buffers: 256MB
+      max_connections: 100
+      
+  # Resource requirements
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "0.5"
+    limits:
+      memory: "1Gi"
+      cpu: "1"
+      
+  # Storage configuration
+  storage:
+    size: 10Gi
+    storageClass: standard
+  
+  # Backup configuration
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://postgresql-backups/"
+      endpointURL: "https://s3.amazonaws.com"
+      s3Credentials:
+        accessKeyId:
+          name: aws-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: aws-creds
+          key: ACCESS_SECRET_KEY
+    retentionPolicy: "30d"
+      
+  # High availability settings
+  primaryUpdateStrategy: unsupervised
+  
+  # Replica configuration
+  minSyncReplicas: 1
+  maxSyncReplicas: 2
+  
+  # Bootstrap from existing instance or backup
+  bootstrap:
+    recovery:
+      source: postgresql-cluster
+      
+  # Affinity/anti-affinity rules for spreading instances
+  affinity:
+    enablePodAntiAffinity: true
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
+      
+  # External clusters for replica configuration
+  externalClusters:
+    - name: postgresql-cluster-beta
+      connectionParameters:
+        host: postgresql-cluster-rw.beta.origin-system.svc.cluster.local
+        user: streaming_replica
+        dbname: postgres
+      password:
+        name: postgresql-replication
+        key: password
+    - name: postgresql-cluster-gamma
+      connectionParameters:
+        host: postgresql-cluster-rw.gamma.origin-system.svc.cluster.local
+        user: streaming_replica
+        dbname: postgres  
+      password:
+        name: postgresql-replication
+        key: password

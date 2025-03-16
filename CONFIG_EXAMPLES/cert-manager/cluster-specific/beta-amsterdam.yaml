@@ -1,0 +1,107 @@
+# Beta Cluster (Amsterdam) - CA Configuration
+# This is the second of the redundant CA deployments
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager-beta
+  namespace: cert-manager
+  labels:
+    app: cert-manager
+    cluster: beta
+    region: amsterdam
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cert-manager
+  template:
+    metadata:
+      labels:
+        app: cert-manager
+        cluster: beta
+    spec:
+      # Similar to the main deployment, but with cluster-specific configuration
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values:
+                - eu-west-4a
+                - eu-west-4b
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: cert-manager
+        image: quay.io/jetstack/cert-manager-controller:v1.12.0
+        args:
+        - --v=2
+        - --cluster-resource-namespace=$(POD_NAMESPACE)
+        - --leader-election-namespace=$(POD_NAMESPACE)
+        - --cluster-name=beta
+        - --region=amsterdam
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        volumeMounts:
+        - name: beta-config
+          mountPath: /etc/config
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: beta-config
+        configMap:
+          name: cert-manager-beta-config
+
+---
+# Beta cluster specific configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cert-manager-beta-config
+  namespace: cert-manager
+data:
+  cluster.json: |
+    {
+      "cluster": {
+        "name": "beta",
+        "region": "amsterdam",
+        "role": "backup",
+        "primary": "alpha",
+        "other_backup": "gamma",
+        "endpoints": {
+          "alpha": "internal-alpha-api.origin.svc.cluster.local",
+          "gamma": "internal-gamma-api.origin.svc.cluster.local"
+        }
+      }
+    }
+  issuers.json: |
+    {
+      "issuers": {
+        "primary": "internal-ca", 
+        "backups": ["alpha-ca", "gamma-ca"]
+      }
+    }
+
+---
+# Beta cluster root CA reference
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: beta-ca
+  namespace: cert-manager
+spec:
+  ca:
+    secretName: internal-ca-key-pair

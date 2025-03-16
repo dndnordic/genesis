@@ -1,0 +1,396 @@
+# Emergency Recovery System for Singularity
+# Defines automatic detection and recovery procedures if Singularity damages itself
+
+---
+# Health Monitor for Singularity
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: singularity-health-monitor
+  namespace: origin-system
+  labels:
+    app: singularity-health-monitor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: singularity-health-monitor
+  template:
+    metadata:
+      labels:
+        app: singularity-health-monitor
+    spec:
+      serviceAccountName: singularity-monitor
+      containers:
+      - name: monitor
+        image: dndnordic/origin-monitor:latest
+        env:
+        - name: NAMESPACE
+          value: "singularity-system"
+        - name: POLL_INTERVAL
+          value: "30"  # seconds
+        - name: MIN_ACTIVE_PODS
+          value: "1"
+        - name: ALERT_THRESHOLD
+          value: "5"  # minutes
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: config
+        configMap:
+          name: recovery-rules
+
+---
+# Service Account for Monitoring
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: singularity-monitor
+  namespace: origin-system
+
+---
+# RBAC for Monitor 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: singularity-monitor
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: singularity-monitor
+subjects:
+- kind: ServiceAccount
+  name: singularity-monitor
+  namespace: origin-system
+roleRef:
+  kind: ClusterRole
+  name: singularity-monitor
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Recovery Rules ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: recovery-rules
+  namespace: origin-system
+data:
+  rules.json: |
+    {
+      "rules": [
+        {
+          "condition": "pod_crash_loop",
+          "threshold": 3,
+          "action": "record_state_and_rollback",
+          "rollback_type": "deployment",
+          "notification_level": "critical"
+        },
+        {
+          "condition": "memory_leak",
+          "threshold": "90%",
+          "action": "restart_pods",
+          "notification_level": "warning"
+        },
+        {
+          "condition": "cpu_spike",
+          "threshold": "95%",
+          "duration": "5m",
+          "action": "throttle_and_record",
+          "notification_level": "warning"
+        },
+        {
+          "condition": "deployment_failure",
+          "action": "rollback",
+          "notification_level": "critical"
+        },
+        {
+          "condition": "zero_ready_pods",
+          "duration": "3m",
+          "action": "emergency_restore",
+          "notification_level": "critical"
+        },
+        {
+          "condition": "self_modification_detected",
+          "action": "freeze_and_restore",
+          "notify_humans": true,
+          "notification_level": "critical"
+        }
+      ],
+      "known_good_states": [
+        {
+          "tag": "v1.0.0",
+          "commit": "abc123",
+          "timestamp": "2025-01-01T00:00:00Z"
+        },
+        {
+          "tag": "v1.1.0",
+          "commit": "def456",
+          "timestamp": "2025-02-01T00:00:00Z"
+        }
+      ]
+    }
+  recovery-script.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Running emergency recovery for Singularity..."
+    
+    # Get current state
+    NS="singularity-system"
+    CURRENT_DEPLOY=$(kubectl get deployment -n $NS -o jsonpath='{.items[0].metadata.name}')
+    
+    # Record failure evidence
+    echo "Recording evidence of failure..."
+    kubectl get pods -n $NS > /tmp/failed-pods.txt
+    kubectl logs -n $NS --tail=500 -l app.kubernetes.io/part-of=singularity > /tmp/failed-logs.txt
+    kubectl describe deployments -n $NS > /tmp/failed-deployment.txt
+    
+    # Determine best known good state
+    echo "Determining best known good version..."
+    LATEST_GOOD=$(cat /app/config/rules.json | jq -r '.known_good_states[-1].tag')
+    
+    # Execute rollback
+    echo "Rolling back to known good version: $LATEST_GOOD"
+    kubectl rollout undo deployment/$CURRENT_DEPLOY -n $NS
+    
+    # Verify recovery
+    echo "Waiting for recovery to complete..."
+    kubectl rollout status deployment/$CURRENT_DEPLOY -n $NS --timeout=5m
+    
+    # Apply restrictions to prevent self-harm
+    echo "Applying runtime restrictions..."
+    kubectl annotate namespace $NS origin-recovery-mode="true" --overwrite
+    
+    echo "Recovery complete. Notifying humans."
+
+---
+# Emergency Recovery Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: singularity-recovery
+  namespace: origin-system
+  labels:
+    app: singularity-recovery
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: singularity-recovery
+  template:
+    metadata:
+      labels:
+        app: singularity-recovery
+    spec:
+      serviceAccountName: singularity-recovery
+      containers:
+      - name: recovery
+        image: dndnordic/origin-recovery:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TARGET_NAMESPACE
+          value: "singularity-system"
+        - name: RECOVERY_MODE
+          value: "automatic"
+        - name: NOTIFY_URL
+          value: "http://notification-service:8080/api/alert"
+        volumeMounts:
+        - name: snapshots
+          mountPath: /app/snapshots
+        - name: recovery-config
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: snapshots
+        persistentVolumeClaim:
+          claimName: singularity-snapshots
+      - name: recovery-config
+        configMap:
+          name: recovery-rules
+
+---
+# Service Account for Recovery
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: singularity-recovery
+  namespace: origin-system
+
+---
+# RBAC for Recovery
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: singularity-recovery
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "events", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: singularity-recovery
+subjects:
+- kind: ServiceAccount
+  name: singularity-recovery
+  namespace: origin-system
+roleRef:
+  kind: ClusterRole
+  name: singularity-recovery
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Storage for System Snapshots
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: singularity-snapshots
+  namespace: origin-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# Recovery Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: recovery-service
+  namespace: origin-system
+spec:
+  selector:
+    app: singularity-recovery
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# Notification Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: origin-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      containers:
+      - name: notifications
+        image: dndnordic/notification-service:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: slack-webhook
+        - name: EMAIL_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: email-api-key
+        - name: ALERT_RECIPIENTS
+          value: "mikael@dndnordic.se,infrastructure-team@dndnordic.se"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+---
+# Service for notifications
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: origin-system
+spec:
+  selector:
+    app: notification-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# Emergency Network Quarantine
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: emergency-singularity-quarantine
+  namespace: singularity-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: singularity
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: origin-system
+      podSelector:
+        matchLabels:
+          app: singularity-recovery
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: origin-system
+      podSelector:
+        matchLabels:
+          app: recovery-service

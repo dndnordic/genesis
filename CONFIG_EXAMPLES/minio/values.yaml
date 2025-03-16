@@ -1,0 +1,93 @@
+# MinIO multi-cluster helm chart values
+# For S3-compatible internal storage
+
+mode: distributed  # Use distributed mode for high availability
+
+# Common configuration
+replicas: 4
+resources:
+  requests:
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+
+# MinIO service settings
+service:
+  type: ClusterIP
+  
+# Persistence configuration
+persistence:
+  enabled: true
+  size: 50Gi
+  storageClass: standard
+  
+# Ingress configuration (per cluster)
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  path: /
+  hosts:
+    - minio.origin-system.svc.cluster.local
+
+# Bucket configuration
+buckets:
+  - name: keycloak-infinispan
+    policy: none
+    purge: false
+  - name: origin-backups  
+    policy: none
+    purge: false
+  - name: postgres-backups
+    policy: none
+    purge: false
+  - name: vault-backups
+    policy: none
+    purge: false
+    
+# Create default users for backups and services
+users:
+  - accessKey: "${MINIO_BACKUP_ACCESS_KEY}"
+    secretKey: "${MINIO_BACKUP_SECRET_KEY}"
+    policy: readwrite
+    
+# Cluster replication (for multi-cluster setup)
+replication:
+  enabled: true
+  mode: bidirectional
+  targets:
+    - endpoint: "https://minio.alpha.origin-system.svc.cluster.local"
+      accessKey: "${MINIO_REPLICATION_ACCESS_KEY}"
+      secretKey: "${MINIO_REPLICATION_SECRET_KEY}"
+      buckets: ["origin-backups", "postgres-backups", "keycloak-infinispan"]
+      
+    - endpoint: "https://minio.beta.origin-system.svc.cluster.local"
+      accessKey: "${MINIO_REPLICATION_ACCESS_KEY}"
+      secretKey: "${MINIO_REPLICATION_SECRET_KEY}"
+      buckets: ["origin-backups", "postgres-backups", "keycloak-infinispan"]
+      
+    - endpoint: "https://minio.gamma.origin-system.svc.cluster.local"
+      accessKey: "${MINIO_REPLICATION_ACCESS_KEY}"
+      secretKey: "${MINIO_REPLICATION_SECRET_KEY}"
+      buckets: ["origin-backups", "postgres-backups", "keycloak-infinispan"]
+      
+# Security settings - supporting Let's Encrypt or Internal CA      
+tls:
+  enabled: true
+  # If using Let's Encrypt (preferred)
+  certManager:
+    enabled: true
+    issuerName: "letsencrypt-prod"
+    issuerKind: "ClusterIssuer"
+  
+  # If using internal CA
+  # certSecret: minio-tls
+  # publicCrt: tls.crt
+  # privateKey: tls.key
+
+# Monitoring
+metrics:
+  serviceMonitor:
+    enabled: true

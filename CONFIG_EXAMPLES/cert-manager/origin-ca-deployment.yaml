@@ -1,0 +1,250 @@
+# Origin CA Deployment Configuration
+# This defines the redundant CA root deployment across the three Origin clusters
+
+---
+# Namespace for certificate management
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  labels:
+    istio-injection: enabled
+
+---
+# Cert-Manager Deployment - Installed via Helm chart, just showing reference config
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  replicas: 2  # HA setup
+  selector:
+    matchLabels:
+      app: cert-manager
+  template:
+    metadata:
+      labels:
+        app: cert-manager
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: cert-manager
+        image: quay.io/jetstack/cert-manager-controller:v1.12.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - --v=2
+        - --cluster-resource-namespace=$(POD_NAMESPACE)
+        - --leader-election-namespace=$(POD_NAMESPACE)
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+---
+# Reference for CA sync CronJob - Syncs CA root certificates across clusters
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ca-sync
+  namespace: cert-manager
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: ca-sync
+          containers:
+          - name: ca-sync
+            image: alpine:3.16
+            command:
+            - /bin/sh
+            - -c
+            - |
+              apk add --no-cache curl jq kubectl
+              # Verify CA certificates match across clusters
+              echo "Syncing CA certificates across clusters..."
+              # Logic to compare and sync certificates would go here
+              # Using kubectl to get/create secrets
+          restartPolicy: OnFailure
+
+---
+# Cross-cluster CA backup and redundancy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ca-redundancy-config
+  namespace: cert-manager
+data:
+  clusters.json: |
+    {
+      "clusters": [
+        {
+          "name": "alpha",
+          "region": "frankfurt",
+          "endpoint": "internal-alpha-api.origin.svc.cluster.local"
+        },
+        {
+          "name": "beta",
+          "region": "amsterdam",
+          "endpoint": "internal-beta-api.origin.svc.cluster.local"
+        },
+        {
+          "name": "gamma",
+          "region": "paris",
+          "endpoint": "internal-gamma-api.origin.svc.cluster.local"
+        }
+      ],
+      "primary": "alpha",
+      "fallback": ["beta", "gamma"]
+    }
+
+---
+# Service Account for CA management
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ca-manager
+  namespace: cert-manager
+
+---
+# RBAC for CA management
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ca-manager
+rules:
+- apiGroups: ["cert-manager.io"]
+  resources: ["issuers", "clusterissuers", "certificates"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ca-manager
+subjects:
+- kind: ServiceAccount
+  name: ca-manager
+  namespace: cert-manager
+roleRef:
+  kind: ClusterRole
+  name: ca-manager
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# CA Health Check Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ca-health-monitor
+  namespace: cert-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ca-health-monitor
+  template:
+    metadata:
+      labels:
+        app: ca-health-monitor
+    spec:
+      serviceAccountName: ca-manager
+      containers:
+      - name: monitor
+        image: ubuntu:22.04
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          apt-get update && apt-get install -y curl openssl jq python3-minimal
+          while true; do
+            # Check CA certificate validity
+            openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /ca-cert/ca.crt || echo "CA certificate validation failed!"
+            
+            # Test certificate issuance
+            echo "Testing certificate issuance..."
+            # Logic to test issuing a certificate would go here
+            
+            sleep 3600  # Check every hour
+          done
+        volumeMounts:
+        - name: ca-cert-volume
+          mountPath: /ca-cert
+      volumes:
+      - name: ca-cert-volume
+        configMap:
+          name: ca-trust-bundle
+
+---
+# Service for monitoring
+apiVersion: v1
+kind: Service
+metadata:
+  name: ca-health-monitor
+  namespace: cert-manager
+  labels:
+    app: ca-health-monitor
+spec:
+  selector:
+    app: ca-health-monitor
+  ports:
+  - port: 8080
+    name: metrics
+  type: ClusterIP
+
+---
+# ServiceMonitor for Prometheus integration
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ca-health-monitor
+  namespace: cert-manager
+spec:
+  selector:
+    matchLabels:
+      app: ca-health-monitor
+  endpoints:
+  - port: metrics
+    interval: 30s
+
+---
+# PrometheusRule for alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ca-alerts
+  namespace: cert-manager
+spec:
+  groups:
+  - name: ca.rules
+    rules:
+    - alert: CACertificateExpiringSoon
+      expr: certmanager_certificate_expiration_timestamp_seconds{name="internal-ca-cert"} - time() < 86400 * 30
+      for: 1h
+      labels:
+        severity: warning
+      annotations:
+        summary: "CA Certificate expiring soon"
+        description: "The CA certificate will expire in less than 30 days"
+    
+    - alert: CAIssuanceFailure
+      expr: increase(ca_issuance_failures_total[5m]) > 0
+      for: 15m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Certificate issuance failures detected"
+        description: "The CA failed to issue certificates in the last 5 minutes"

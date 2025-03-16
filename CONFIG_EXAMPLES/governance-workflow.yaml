@@ -1,0 +1,298 @@
+# Governance Workflow Configuration
+# Defines how Singularity code is reviewed and approved by Origin
+
+---
+# Origin Governance Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: origin-governance
+  namespace: origin-system
+  labels:
+    app: origin-governance
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: origin-governance
+  template:
+    metadata:
+      labels:
+        app: origin-governance
+    spec:
+      containers:
+      - name: governance-service
+        image: dndnordic/origin-governance:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-token
+              key: token
+        - name: GOVERNANCE_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: governance-api-token
+              key: token
+        - name: GOVERNANCE_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: governance-signing-key
+              key: key
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: config
+        configMap:
+          name: governance-config
+
+---
+# Governance Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance-service
+  namespace: origin-system
+spec:
+  selector:
+    app: origin-governance
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# Governance ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: governance-config
+  namespace: origin-system
+data:
+  config.json: |
+    {
+      "repositories": {
+        "dndnordic/singularity": {
+          "required_checks": ["static-analysis", "security-scan", "unit-tests"],
+          "approval_policy": {
+            "required_approvers": 1,
+            "system_review": true,
+            "origin_approval": true
+          },
+          "deployment_targets": {
+            "main": ["dev", "stage", "regression", "production"],
+            "develop": ["dev", "stage"]
+          },
+          "security_policies": {
+            "scan_dependencies": true,
+            "check_credentials": true,
+            "validate_permissions": true
+          }
+        }
+      },
+      "approval_workflow": {
+        "steps": [
+          {
+            "name": "static-analysis",
+            "description": "Static code analysis",
+            "required": true
+          },
+          {
+            "name": "security-scan",
+            "description": "Security vulnerability scanning",
+            "required": true
+          },
+          {
+            "name": "unit-tests",
+            "description": "Run unit tests",
+            "required": true
+          },
+          {
+            "name": "origin-review",
+            "description": "Review by Origin governance service",
+            "required": true
+          }
+        ]
+      }
+    }
+  policies.rego: |
+    package governance
+    
+    default allow = false
+    
+    # Allow if all required checks pass
+    allow {
+      all_required_checks_pass
+      has_valid_approval
+      no_security_violations
+    }
+    
+    all_required_checks_pass {
+      count({status | input.checks[_].name = input.required_checks[_]; input.checks[_].status = "success"; status = true}) = count(input.required_checks)
+    }
+    
+    has_valid_approval {
+      count(input.reviews) >= input.approval_policy.required_approvers
+      input.system_review_passed = true
+    }
+    
+    no_security_violations {
+      count(input.security_violations) = 0
+    }
+
+---
+# GitHub Webhook Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-webhook
+  namespace: origin-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-webhook
+  template:
+    metadata:
+      labels:
+        app: github-webhook
+    spec:
+      containers:
+      - name: webhook-service
+        image: dndnordic/github-webhook:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: GITHUB_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: github-webhook-secret
+              key: secret
+        - name: GOVERNANCE_API_ENDPOINT
+          value: "http://governance-service:8080/api/v1/review"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+---
+# Webhook Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-webhook
+  namespace: origin-system
+spec:
+  selector:
+    app: github-webhook
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# Ingress for GitHub webhook
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: github-webhook-ingress
+  namespace: origin-system
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: internal-ca
+spec:
+  rules:
+  - host: webhook.origin.internal
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: github-webhook
+            port:
+              number: 8080
+  tls:
+  - hosts:
+    - webhook.origin.internal
+    secretName: webhook-tls
+
+---
+# Role for Singularity to access governance API
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: governance-api-access
+  namespace: origin-system
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  resourceNames: ["governance-service"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["governance-config"]
+  verbs: ["get"]
+
+---
+# RoleBinding for governance API access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: singularity-governance-access
+  namespace: origin-system
+subjects:
+- kind: ServiceAccount
+  name: singularity-app
+  namespace: singularity-system
+roleRef:
+  kind: Role
+  name: governance-api-access
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Event logging for governance actions
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: governance-event-rules
+  namespace: origin-system
+data:
+  rules.json: |
+    {
+      "rules": [
+        {
+          "event": "pull_request.opened",
+          "action": "initiate_review"
+        },
+        {
+          "event": "pull_request.synchronized",
+          "action": "restart_review"
+        },
+        {
+          "event": "pull_request.approved",
+          "action": "record_human_approval"
+        },
+        {
+          "event": "check_suite.completed",
+          "action": "update_check_status"
+        },
+        {
+          "event": "pull_request.merged",
+          "action": "trigger_deployment"
+        }
+      ]
+    }

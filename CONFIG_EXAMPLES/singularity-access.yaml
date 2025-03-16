@@ -1,0 +1,236 @@
+# Singularity Access Configuration
+# Defines the RBAC and roles needed for Singularity to interact with Origin services
+
+---
+# ServiceAccount for Singularity in each cluster
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: singularity-app
+  namespace: singularity-system
+  labels:
+    app.kubernetes.io/part-of: singularity
+    app.kubernetes.io/component: system
+
+---
+# TokenRequest for Singularity to get Vault access
+apiVersion: v1
+kind: Secret
+metadata:
+  name: singularity-vault-auth
+  namespace: singularity-system
+  annotations:
+    kubernetes.io/service-account.name: singularity-app
+type: kubernetes.io/service-account-token
+
+---
+# ClusterRole defining what Singularity can do
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: singularity-restricted
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates"]
+  verbs: ["get", "list", "watch", "create"]
+- apiGroups: ["networking.istio.io"]
+  resources: ["virtualservices", "destinationrules"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "podmonitors"]
+  verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding for Singularity
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: singularity-restricted
+subjects:
+- kind: ServiceAccount
+  name: singularity-app
+  namespace: singularity-system
+roleRef:
+  kind: ClusterRole
+  name: singularity-restricted
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for Singularity to access MinIO
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: minio-access
+  namespace: origin-system
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  resourceNames: ["minio"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["minio-singularity-access"]
+  verbs: ["get"]
+
+---
+# RoleBinding for MinIO access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: singularity-minio-access
+  namespace: origin-system
+subjects:
+- kind: ServiceAccount
+  name: singularity-app
+  namespace: singularity-system
+roleRef:
+  kind: Role
+  name: minio-access
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for Singularity to access Keycloak
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: keycloak-access
+  namespace: origin-system
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  resourceNames: ["keycloak"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["keycloak-singularity-client"]
+  verbs: ["get"]
+
+---
+# RoleBinding for Keycloak access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: singularity-keycloak-access
+  namespace: origin-system
+subjects:
+- kind: ServiceAccount
+  name: singularity-app
+  namespace: singularity-system
+roleRef:
+  kind: Role
+  name: keycloak-access
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for Singularity to access PostgreSQL
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: postgresql-access
+  namespace: origin-system
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  resourceNames: ["postgresql"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["postgresql-singularity-user"]
+  verbs: ["get"]
+
+---
+# RoleBinding for PostgreSQL access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: singularity-postgresql-access
+  namespace: origin-system
+subjects:
+- kind: ServiceAccount
+  name: singularity-app
+  namespace: singularity-system
+roleRef:
+  kind: Role
+  name: postgresql-access
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for Singularity to access Vault
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-access
+  namespace: origin-system
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  resourceNames: ["vault"]
+  verbs: ["get"]
+
+---
+# RoleBinding for Vault access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: singularity-vault-access
+  namespace: origin-system
+subjects:
+- kind: ServiceAccount
+  name: singularity-app
+  namespace: singularity-system
+roleRef:
+  kind: Role
+  name: vault-access
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Namespace Resource Quota for Singularity
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: singularity-quota
+  namespace: singularity-system
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    pods: "50"
+
+---
+# NetworkPolicy to restrict Singularity's network access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: singularity-network-policy
+  namespace: singularity-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: singularity
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: origin-system
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: origin-system
+    - namespaceSelector:
+        matchLabels:
+          name: cert-manager
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system

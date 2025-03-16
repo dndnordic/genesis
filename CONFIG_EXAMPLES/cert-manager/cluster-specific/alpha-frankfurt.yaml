@@ -1,0 +1,106 @@
+# Alpha Cluster (Frankfurt) - CA Configuration
+# This is the first of the redundant CA deployments
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager-alpha
+  namespace: cert-manager
+  labels:
+    app: cert-manager
+    cluster: alpha
+    region: frankfurt
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cert-manager
+  template:
+    metadata:
+      labels:
+        app: cert-manager
+        cluster: alpha
+    spec:
+      # Similar to the main deployment, but with cluster-specific configuration
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values:
+                - eu-central-1a
+                - eu-central-1b
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: cert-manager
+        image: quay.io/jetstack/cert-manager-controller:v1.12.0
+        args:
+        - --v=2
+        - --cluster-resource-namespace=$(POD_NAMESPACE)
+        - --leader-election-namespace=$(POD_NAMESPACE)
+        - --cluster-name=alpha
+        - --region=frankfurt
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        volumeMounts:
+        - name: alpha-config
+          mountPath: /etc/config
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: alpha-config
+        configMap:
+          name: cert-manager-alpha-config
+
+---
+# Alpha cluster specific configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cert-manager-alpha-config
+  namespace: cert-manager
+data:
+  cluster.json: |
+    {
+      "cluster": {
+        "name": "alpha",
+        "region": "frankfurt",
+        "role": "primary",
+        "backups": ["beta", "gamma"],
+        "endpoints": {
+          "beta": "internal-beta-api.origin.svc.cluster.local",
+          "gamma": "internal-gamma-api.origin.svc.cluster.local"
+        }
+      }
+    }
+  issuers.json: |
+    {
+      "issuers": {
+        "primary": "internal-ca",
+        "backups": ["beta-ca", "gamma-ca"]
+      }
+    }
+
+---
+# Alpha cluster root CA reference
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: alpha-ca
+  namespace: cert-manager
+spec:
+  ca:
+    secretName: internal-ca-key-pair

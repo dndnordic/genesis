@@ -1,0 +1,70 @@
+# Genesis Builder Configuration
+
+# Registry settings
+registry:
+  url: ${REGISTRY_URL:-localhost:5000}
+  username: ${REGISTRY_USERNAME}
+  password: ${REGISTRY_PASSWORD}
+
+# Kubernetes settings
+kubernetes:
+  namespace: singularity-system
+  service_account: singularity-sa
+  resource_limits:
+    cpu: '1'
+    memory: '1Gi'
+  resource_requests:
+    cpu: '0.5'
+    memory: '512Mi'
+
+# Component definitions
+components:
+  singularity-engine:
+    repository: singularity-engine
+    tag: latest
+    build_args: []
+    dockerfile: Dockerfile
+    context: .
+  
+  timescaledb:
+    repository: timescaledb
+    tag: latest-pg14
+    external: true
+  
+  system-monitor:
+    repository: singularity-system-monitor
+    tag: latest
+    build_args: []
+    dockerfile: Dockerfile
+    context: .
+  
+  self-hosted-llm:
+    repository: singularity-llm
+    tag: latest
+    build_args: []
+    dockerfile: Dockerfile.llm
+    context: .
+    
+  weaviate:
+    repository: weaviate
+    tag: latest
+    external: true
+
+# Cloud provider specific settings
+cloud_providers:
+  vultr:
+    region: ewr
+    plan: vc2-2c-4gb
+    default: true
+  
+  aws:
+    region: us-east-1
+    instance_type: t3.medium
+  
+  gcp:
+    region: us-central1
+    machine_type: e2-medium
+  
+  azure:
+    region: eastus
+    vm_size: Standard_D2s_v3

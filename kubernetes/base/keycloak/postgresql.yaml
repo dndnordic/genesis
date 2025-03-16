@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keycloak-postgresql
+  labels:
+    app: keycloak-postgresql
+spec:
+  serviceName: keycloak-postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-postgresql
+  template:
+    metadata:
+      labels:
+        app: keycloak-postgresql
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+      - name: postgresql
+        image: postgres:14
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-postgresql
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-postgresql
+              key: password
+        - name: POSTGRES_DB
+          value: keycloak
+        ports:
+        - name: postgresql
+          containerPort: 5432
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 6
+        resources:
+          limits:
+            memory: 1Gi
+            cpu: 1000m
+          requests:
+            memory: 256Mi
+            cpu: 250m
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          subPath: postgres
+        - name: keycloak-postgresql-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+      volumes:
+      - name: keycloak-postgresql-config
+        configMap:
+          name: keycloak-postgresql-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-postgresql
+  labels:
+    app: keycloak-postgresql
+spec:
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: postgresql
+  selector:
+    app: keycloak-postgresql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-postgresql-config
+data:
+  postgresql.conf: |
+    # PostgreSQL configuration for Keycloak
+    listen_addresses = '*'
+    max_connections = 100
+    shared_buffers = 256MB
+    effective_cache_size = 768MB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 7864kB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 2621kB
+    min_wal_size = 1GB
+    max_wal_size = 4GB

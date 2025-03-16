@@ -1,0 +1,183 @@
+# Cloudflare Tunnel Configuration for Origin
+# Provides secure remote access to Origin web interface and APIs
+
+---
+# Cloudflared Deployment for Tunnel
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: origin-system
+  labels:
+    app: cloudflared
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+      - name: cloudflared
+        image: cloudflare/cloudflared:latest
+        args:
+        - tunnel
+        - --no-autoupdate
+        - run
+        env:
+        - name: TUNNEL_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cloudflared-credentials
+              key: token
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 2000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 2000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
+---
+# Secret for Cloudflare credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflared-credentials
+  namespace: origin-system
+type: Opaque
+stringData:
+  token: "${CLOUDFLARE_TUNNEL_TOKEN}"
+
+---
+# ConfigMap for Cloudflare Tunnel configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: origin-system
+data:
+  config.yaml: |
+    tunnel: ${CLOUDFLARE_TUNNEL_ID}
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    
+    # Metrics endpoint
+    metrics: 0.0.0.0:2000
+    
+    # Routes
+    ingress:
+      # Origin Administration UI
+      - hostname: admin.dndnordic.com
+        service: https://origin-web-ui.origin-system.svc.cluster.local:80
+        originRequest:
+          noTLSVerify: true
+      
+      # Origin API Gateway
+      - hostname: api.dndnordic.com
+        service: https://origin-api-gateway.origin-system.svc.cluster.local:8080
+        originRequest:
+          noTLSVerify: true
+      
+      # Default catch-all
+      - service: http_status:404
+
+---
+# Cloudflare Tunnel Access Policy
+# This should be applied through Cloudflare Teams Dashboard
+# but is included here for reference
+# 
+# Example policy:
+#
+# Application:
+#   Name: Origin Admin
+#   Domain: admin.dndnordic.com
+#   Session Duration: 24 hours
+#   Authentication Methods:
+#     - Require identity provider (Okta/GSuite/etc.) authentication
+#     - Require WebAuthn / YubiKey device authentication
+#   Permissions:
+#     - Email Domains: dndnordic.se, dndnordic.com
+#     - Specific Emails: mikael@dndnordic.se
+#     - Specific IPs: Office IPs, Mikael home IP
+#   Additional Security:
+#     - Block countries: All except Sweden, Denmark, Finland, Norway
+#     - Device posture checks: Require approved OS versions
+#     - Cloudflare Browser Isolation: Enabled
+# 
+# Application:
+#   Name: Origin API
+#   Domain: api.dndnordic.com
+#   Session Duration: 1 hour
+#   Authentication Methods:
+#     - Require service token
+#     - Require client certificate
+#   Permissions:
+#     - Specific service accounts
+#     - Specific IPs: Only cluster IPs
+#   Additional Security:
+#     - Rate limiting: 1000 requests per minute
+#     - Block all countries
+#     - WAF protection: Enabled
+
+---
+# Service Account for Cloudflare
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudflared
+  namespace: origin-system
+
+---
+# Network Policy for Cloudflare Tunnel
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cloudflared-egress
+  namespace: origin-system
+spec:
+  podSelector:
+    matchLabels:
+      app: cloudflared
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: UDP
+      port: 443
+    - protocol: TCP
+      port: 7844
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: origin-system
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 443

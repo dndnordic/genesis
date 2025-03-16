@@ -1,0 +1,127 @@
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default-mtls
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Configuring Istio to use our internal CA
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: istio-control-plane
+  namespace: istio-system
+spec:
+  meshConfig:
+    defaultConfig:
+      proxyMetadata:
+        # Use cert-manager issued certificates from our internal CA
+        ISTIO_META_TLS_CLIENT_ROOT_CERT: /etc/pki/tls/certs/ca-bundle.crt
+  components:
+    pilot:
+      k8s:
+        env:
+          # Tell Istio to trust our internal CA
+          - name: PILOT_CERT_PROVIDER
+            value: "kubernetes"
+          - name: PILOT_CUSTOM_CA
+            value: "true"
+          - name: CA_PROVIDER
+            value: "Kubernetes"
+        overlays:
+          # Mount the trusted CA certificate bundle
+          - apiVersion: apps/v1
+            kind: Deployment
+            name: istiod
+            patches:
+              - path: spec.template.spec.containers.[name:discovery].volumeMounts
+                value:
+                  - name: ca-root-cert
+                    mountPath: /etc/ssl/certs
+                    readOnly: true
+              - path: spec.template.spec.volumes
+                value:
+                  - name: ca-root-cert
+                    hostPath:
+                      path: /etc/ssl/certs
+                      type: Directory
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: origin-system-policy
+  namespace: origin-system
+spec:
+  selector:
+    matchLabels:
+      app: origin-api
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/origin-system/sa/origin-system"]
+    - source:
+        namespaces: ["singularity-system"]
+  - from:
+    - source:
+        principals: ["cluster.local/ns/monitoring/sa/prometheus"]
+    to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/metrics"]
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: cross-cluster-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: eastwestgateway
+  servers:
+  - port:
+      number: 15443
+      name: tls
+      protocol: TLS
+    tls:
+      mode: AUTO_PASSTHROUGH
+    hosts:
+    - "*.local"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: origin-api
+  namespace: origin-system
+spec:
+  hosts:
+  - "origin-api.origin-system.svc.cluster.local"
+  http:
+  - route:
+    - destination:
+        host: origin-api
+        port:
+          number: 8000
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: origin-api
+  namespace: origin-system
+spec:
+  host: origin-api
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 10
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s

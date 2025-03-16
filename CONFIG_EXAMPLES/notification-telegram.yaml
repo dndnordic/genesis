@@ -1,0 +1,266 @@
+# Telegram Notification System for Origin
+# Allows Origin to automatically notify Mikael in emergency situations
+
+---
+# Telegram Bot Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telegram-notification-bot
+  namespace: origin-system
+  labels:
+    app: telegram-notification-bot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: telegram-notification-bot
+  template:
+    metadata:
+      labels:
+        app: telegram-notification-bot
+    spec:
+      containers:
+      - name: telegram-bot
+        image: dndnordic/telegram-notification-bot:latest
+        env:
+        - name: TELEGRAM_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: telegram-secrets
+              key: bot-token
+        - name: TELEGRAM_CHAT_ID_MIKAEL
+          valueFrom:
+            secretKeyRef:
+              name: telegram-secrets
+              key: chat-id-mikael
+        - name: TELEGRAM_CHAT_ID_INFRASTRUCTURE
+          valueFrom:
+            secretKeyRef:
+              name: telegram-secrets
+              key: chat-id-infrastructure
+        - name: LOG_LEVEL
+          value: "info"
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 60
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
+---
+# Service for Telegram bot
+apiVersion: v1
+kind: Service
+metadata:
+  name: telegram-notification-bot
+  namespace: origin-system
+spec:
+  selector:
+    app: telegram-notification-bot
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# Secrets for Telegram
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telegram-secrets
+  namespace: origin-system
+type: Opaque
+stringData:
+  bot-token: "${TELEGRAM_BOT_TOKEN}"
+  chat-id-mikael: "${TELEGRAM_CHAT_ID_MIKAEL}"
+  chat-id-infrastructure: "${TELEGRAM_CHAT_ID_INFRASTRUCTURE}"
+
+---
+# ConfigMap for Telegram bot config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: telegram-bot-config
+  namespace: origin-system
+data:
+  config.json: |
+    {
+      "alert_levels": {
+        "info": {
+          "emoji": "ℹ️",
+          "recipients": ["infrastructure"]
+        },
+        "warning": {
+          "emoji": "⚠️",
+          "recipients": ["infrastructure"]
+        },
+        "critical": {
+          "emoji": "🚨",
+          "recipients": ["mikael", "infrastructure"]
+        },
+        "emergency": {
+          "emoji": "🔥",
+          "recipients": ["mikael", "infrastructure"],
+          "notification_sound": true,
+          "repeat_until_acknowledged": true
+        }
+      },
+      "system_components": {
+        "singularity": {
+          "min_level_for_mikael": "critical",
+          "templates": {
+            "self_harm": "🔥 *EMERGENCY* 🔥\nSingularity potential self-harm detected!\nAction: {action}\nDetails: {details}\nTimestamp: {timestamp}\n\nStatus: {status}"
+          }
+        },
+        "origin": {
+          "min_level_for_mikael": "warning",
+          "templates": {
+            "service_down": "⚠️ *WARNING* ⚠️\nOrigin service {service} is down in {cluster}\nDetails: {details}\nTimestamp: {timestamp}"
+          }
+        },
+        "infrastructure": {
+          "min_level_for_mikael": "critical",
+          "templates": {
+            "cluster_issue": "🚨 *CRITICAL* 🚨\nCluster {cluster} has issues\nAffected components: {components}\nDetails: {details}\nTimestamp: {timestamp}"
+          }
+        }
+      },
+      "acknowledgment_commands": [
+        "/ack",
+        "/acknowledge",
+        "/resolved"
+      ],
+      "escalation": {
+        "unacknowledged_timeout_minutes": 15,
+        "escalation_path": ["infrastructure", "mikael"]
+      }
+    }
+  response-templates.json: |
+    {
+      "acknowledgment": "✅ Alert acknowledged by {user}.",
+      "escalation": "⏫ Escalating to {recipient} due to no acknowledgment for {minutes} minutes.",
+      "resolution": "✅ Issue marked as resolved by {user}.",
+      "help": "Available commands:\n/ack - Acknowledge alert\n/resolved - Mark alert as resolved\n/status - Show current system status\n/silence 30m - Silence alerts for 30 minutes"
+    }
+
+---
+# Service Account for Telegram Bot
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: telegram-notification-bot
+  namespace: origin-system
+
+---
+# Role for Telegram Bot
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: telegram-notification
+  namespace: origin-system
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["telegram-bot-config", "notification-status"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+
+---
+# RoleBinding for Telegram Bot
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: telegram-notification
+  namespace: origin-system
+subjects:
+- kind: ServiceAccount
+  name: telegram-notification-bot
+  namespace: origin-system
+roleRef:
+  kind: Role
+  name: telegram-notification
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Alerting Rules for Telegram Notifications
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: telegram-notification-rules
+  namespace: monitoring
+spec:
+  groups:
+  - name: singularity-health.rules
+    rules:
+    - alert: SingularitySelfHarm
+      expr: singularity_self_modification_attempts > 0
+      for: 1m
+      labels:
+        severity: emergency
+        notification_channel: telegram
+        recipient: mikael
+      annotations:
+        summary: "Singularity self-harm attempt detected"
+        description: "Singularity attempted to modify its own deployment {{ $value }} times"
+        emoji: "🔥"
+        telegram_template: "self_harm"
+    
+    - alert: SingularityHighResourceUsage
+      expr: sum(container_memory_usage_bytes{namespace="singularity-system"}) / sum(kube_pod_container_resource_limits_memory_bytes{namespace="singularity-system"}) > 0.9
+      for: 5m
+      labels:
+        severity: critical
+        notification_channel: telegram
+        recipient: infrastructure
+      annotations:
+        summary: "Singularity high resource usage"
+        description: "Singularity is using {{ $value | humanizePercentage }} of its memory limit"
+        emoji: "⚠️"
+
+---
+# Integration with Recovery System
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recovery-telegram-bridge
+  namespace: origin-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recovery-telegram-bridge
+  template:
+    metadata:
+      labels:
+        app: recovery-telegram-bridge
+    spec:
+      containers:
+      - name: bridge
+        image: dndnordic/recovery-telegram-bridge:latest
+        env:
+        - name: TELEGRAM_SERVICE_URL
+          value: "http://telegram-notification-bot:8080/api/notify"
+        - name: RECOVERY_SERVICE_URL
+          value: "http://recovery-service:8080/api/status"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi

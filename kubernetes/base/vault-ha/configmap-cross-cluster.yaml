@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config-cross-cluster
+data:
+  vault-cross-cluster.hcl: |
+    # Cross-cluster integration
+    
+    # Alpha cluster
+    storage "raft" {
+      path = "/vault/data/alpha"
+      node_id = "alpha-${VAULT_RAFT_NODE_ID}"
+      retry_join {
+        leader_api_addr = "http://vault-0.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+      retry_join {
+        leader_api_addr = "http://vault-1.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+      retry_join {
+        leader_api_addr = "http://vault-2.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+    }
+    
+    # Beta cluster
+    storage "raft" {
+      path = "/vault/data/beta"
+      node_id = "beta-${VAULT_RAFT_NODE_ID}"
+      retry_join {
+        leader_api_addr = "http://vault-0.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+      retry_join {
+        leader_api_addr = "http://vault-1.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+      retry_join {
+        leader_api_addr = "http://vault-2.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+    }
+    
+    # Gamma cluster
+    storage "raft" {
+      path = "/vault/data/gamma"
+      node_id = "gamma-${VAULT_RAFT_NODE_ID}"
+      retry_join {
+        leader_api_addr = "http://vault-0.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+      retry_join {
+        leader_api_addr = "http://vault-1.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+      retry_join {
+        leader_api_addr = "http://vault-2.vault-headless.origin-system.svc.cluster.local:8200"
+      }
+    }
+    
+    # Cross-cluster replication (leader-follower)
+    replication {
+      performance {
+        mode = "primary"
+        # Each cluster will also have a configuration in mode = "secondary"
+        # with token generated during setup
+      }
+    }
+    
+    # Cross-cluster auto-unseal
+    seal "transit" {
+      address = "https://vault.alpha.origin-system.svc.cluster.local:8200"
+      token = "${VAULT_TRANSIT_TOKEN}"
+      disable_renewal = "false"
+      key_name = "autounseal"
+      mount_path = "transit/"
+      tls_skip_verify = "true"
+    }

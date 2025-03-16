@@ -1,0 +1,295 @@
+# Service Discovery Configuration for Origin and Singularity
+# This defines how Origin exposes APIs and how Singularity discovers them
+
+---
+# Service Registry ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-registry
+  namespace: origin-system
+data:
+  # Central registry of all services and their endpoints
+  services.json: |
+    {
+      "version": "1.0",
+      "environment": "production",
+      "last_updated": "2025-03-16T00:00:00Z",
+      "clusters": [
+        {
+          "name": "alpha",
+          "region": "frankfurt",
+          "endpoint": "https://api.alpha.origin.internal",
+          "role": "primary"
+        },
+        {
+          "name": "beta",
+          "region": "amsterdam",
+          "endpoint": "https://api.beta.origin.internal",
+          "role": "backup"
+        },
+        {
+          "name": "gamma",
+          "region": "paris",
+          "endpoint": "https://api.gamma.origin.internal",
+          "role": "backup"
+        }
+      ],
+      "services": {
+        "identity": {
+          "description": "Keycloak Identity Provider",
+          "endpoints": {
+            "alpha": "https://keycloak.alpha.origin.internal/auth",
+            "beta": "https://keycloak.beta.origin.internal/auth",
+            "gamma": "https://keycloak.gamma.origin.internal/auth"
+          },
+          "internal_endpoints": {
+            "alpha": "http://keycloak.origin-system.svc.cluster.local:8080/auth",
+            "beta": "http://keycloak.origin-system.svc.cluster.local:8080/auth",
+            "gamma": "http://keycloak.origin-system.svc.cluster.local:8080/auth"
+          },
+          "health_endpoints": {
+            "alpha": "/health",
+            "beta": "/health",
+            "gamma": "/health"
+          }
+        },
+        "storage": {
+          "description": "MinIO S3-Compatible Storage",
+          "endpoints": {
+            "alpha": "https://minio.alpha.origin.internal",
+            "beta": "https://minio.beta.origin.internal",
+            "gamma": "https://minio.gamma.origin.internal"
+          },
+          "internal_endpoints": {
+            "alpha": "http://minio.origin-system.svc.cluster.local:9000",
+            "beta": "http://minio.origin-system.svc.cluster.local:9000",
+            "gamma": "http://minio.origin-system.svc.cluster.local:9000"
+          },
+          "health_endpoints": {
+            "alpha": "/minio/health/live",
+            "beta": "/minio/health/live",
+            "gamma": "/minio/health/live"
+          }
+        },
+        "database": {
+          "description": "PostgreSQL Database Cluster",
+          "endpoints": {
+            "alpha": "postgresql.alpha.origin.internal",
+            "beta": "postgresql.beta.origin.internal",
+            "gamma": "postgresql.gamma.origin.internal"
+          },
+          "internal_endpoints": {
+            "alpha": "postgresql.origin-system.svc.cluster.local:5432",
+            "beta": "postgresql.origin-system.svc.cluster.local:5432",
+            "gamma": "postgresql.origin-system.svc.cluster.local:5432"
+          },
+          "health_endpoints": {
+            "alpha": "/healthz",
+            "beta": "/healthz",
+            "gamma": "/healthz"
+          }
+        },
+        "secrets": {
+          "description": "Vault Secret Manager",
+          "endpoints": {
+            "alpha": "https://vault.alpha.origin.internal",
+            "beta": "https://vault.beta.origin.internal",
+            "gamma": "https://vault.gamma.origin.internal"
+          },
+          "internal_endpoints": {
+            "alpha": "http://vault.origin-system.svc.cluster.local:8200",
+            "beta": "http://vault.origin-system.svc.cluster.local:8200",
+            "gamma": "http://vault.origin-system.svc.cluster.local:8200"
+          },
+          "health_endpoints": {
+            "alpha": "/v1/sys/health",
+            "beta": "/v1/sys/health",
+            "gamma": "/v1/sys/health"
+          }
+        },
+        "certificates": {
+          "description": "Certificate Management Service",
+          "endpoints": {
+            "alpha": "https://certs.alpha.origin.internal",
+            "beta": "https://certs.beta.origin.internal",
+            "gamma": "https://certs.gamma.origin.internal"
+          },
+          "internal_endpoints": {
+            "alpha": "http://cert-manager-webhook.cert-manager.svc.cluster.local:443",
+            "beta": "http://cert-manager-webhook.cert-manager.svc.cluster.local:443",
+            "gamma": "http://cert-manager-webhook.cert-manager.svc.cluster.local:443"
+          },
+          "health_endpoints": {
+            "alpha": "/healthz",
+            "beta": "/healthz",
+            "gamma": "/healthz"
+          }
+        },
+        "mesh": {
+          "description": "Istio Service Mesh",
+          "endpoints": {
+            "alpha": "https://istio.alpha.origin.internal",
+            "beta": "https://istio.beta.origin.internal",
+            "gamma": "https://istio.gamma.origin.internal"
+          },
+          "internal_endpoints": {
+            "alpha": "http://istiod.istio-system.svc.cluster.local:15014",
+            "beta": "http://istiod.istio-system.svc.cluster.local:15014",
+            "gamma": "http://istiod.istio-system.svc.cluster.local:15014"
+          },
+          "health_endpoints": {
+            "alpha": "/healthz/ready",
+            "beta": "/healthz/ready",
+            "gamma": "/healthz/ready"
+          }
+        },
+        "api": {
+          "description": "Origin API Gateway",
+          "endpoints": {
+            "alpha": "https://api.alpha.origin.internal",
+            "beta": "https://api.beta.origin.internal",
+            "gamma": "https://api.gamma.origin.internal"
+          },
+          "internal_endpoints": {
+            "alpha": "http://api-gateway.origin-system.svc.cluster.local:8080",
+            "beta": "http://api-gateway.origin-system.svc.cluster.local:8080",
+            "gamma": "http://api-gateway.origin-system.svc.cluster.local:8080"
+          },
+          "health_endpoints": {
+            "alpha": "/health",
+            "beta": "/health",
+            "gamma": "/health"
+          }
+        }
+      }
+    }
+
+---
+# Single consolidated API gateway for service discovery
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-discovery-api
+  namespace: origin-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: service-discovery-api
+  template:
+    metadata:
+      labels:
+        app: service-discovery-api
+    spec:
+      containers:
+      - name: api
+        image: nginx:1.21-alpine
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        - name: service-registry
+          mountPath: /usr/share/nginx/html
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: service-discovery-nginx-config
+      - name: service-registry
+        configMap:
+          name: service-registry
+
+---
+# NGINX configuration for the service discovery API
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-discovery-nginx-config
+  namespace: origin-system
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        
+        location /health {
+            return 200 '{"status":"healthy"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /api/v1/services {
+            alias /usr/share/nginx/html/services.json;
+            add_header Content-Type application/json;
+            add_header Cache-Control "max-age=300";
+        }
+        
+        location /api/v1/discovery {
+            alias /usr/share/nginx/html/services.json;
+            add_header Content-Type application/json;
+            add_header Cache-Control "max-age=300";
+        }
+        
+        # For backwards compatibility
+        location = /services {
+            return 301 /api/v1/services;
+        }
+        
+        location / {
+            return 404;
+        }
+    }
+
+---
+# Service for the discovery API
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-discovery
+  namespace: origin-system
+  labels:
+    app: service-discovery-api
+spec:
+  selector:
+    app: service-discovery-api
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  type: ClusterIP
+
+---
+# Role-based access for Singularity to access service discovery
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: service-discovery-reader
+  namespace: origin-system
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["service-registry"]
+  verbs: ["get", "watch", "list"]
+
+---
+# Role binding for Singularity service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: singularity-service-discovery
+  namespace: origin-system
+subjects:
+- kind: ServiceAccount
+  name: singularity-app
+  namespace: singularity-system
+roleRef:
+  kind: Role
+  name: service-discovery-reader
+  apiGroup: rbac.authorization.k8s.io

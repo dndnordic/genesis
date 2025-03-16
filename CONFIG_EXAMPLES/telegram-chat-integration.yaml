@@ -1,0 +1,339 @@
+# Multi-System Telegram Integration
+# Allows Mikael to chat with Origin, Singularity, and Sentry LLM via Telegram
+
+---
+# Consolidated Telegram Bot Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: integrated-telegram-bot
+  namespace: origin-system
+  labels:
+    app: integrated-telegram-bot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: integrated-telegram-bot
+  template:
+    metadata:
+      labels:
+        app: integrated-telegram-bot
+    spec:
+      containers:
+      - name: telegram-bot
+        image: dndnordic/telegram-multi-bot:latest
+        env:
+        - name: TELEGRAM_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: telegram-secrets
+              key: bot-token
+        - name: TELEGRAM_CHAT_ID_MIKAEL
+          valueFrom:
+            secretKeyRef:
+              name: telegram-secrets
+              key: chat-id-mikael
+        - name: ORIGIN_API_URL
+          value: "http://origin-api-gateway:8080"
+        - name: SINGULARITY_API_URL
+          value: "http://singularity-api.singularity-system.svc.cluster.local:8080"
+        - name: SENTRY_LLM_API_URL
+          value: "http://sentry-llm.origin-system.svc.cluster.local:8080"
+        - name: WEBHOOK_PASSPHRASE
+          valueFrom:
+            secretKeyRef:
+              name: telegram-secrets
+              key: webhook-passphrase
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: telegram-config
+          mountPath: /app/config
+      volumes:
+      - name: telegram-config
+        configMap:
+          name: telegram-chat-config
+
+---
+# Service for Telegram Bot
+apiVersion: v1
+kind: Service
+metadata:
+  name: integrated-telegram-bot
+  namespace: origin-system
+spec:
+  selector:
+    app: integrated-telegram-bot
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# ConfigMap for Telegram Chat Config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: telegram-chat-config
+  namespace: origin-system
+data:
+  chat-config.json: |
+    {
+      "systems": {
+        "origin": {
+          "display_name": "🧠 Origin",
+          "prefix": "[Origin]",
+          "description": "Origin infrastructure management system",
+          "icon": "🧠",
+          "color": "#0066cc",
+          "api_path": "/api/v1/chat",
+          "default_commands": [
+            "/status",
+            "/alerts",
+            "/services",
+            "/clusters"
+          ],
+          "special_commands": {
+            "/emergency": "Activate emergency response",
+            "/rollback": "Rollback a deployment",
+            "/restart": "Restart a service"
+          },
+          "message_template": "🧠 <b>Origin:</b> {message}"
+        },
+        "singularity": {
+          "display_name": "🤖 Singularity",
+          "prefix": "[Singularity]",
+          "description": "Singularity AI system",
+          "icon": "🤖",
+          "color": "#9900cc",
+          "api_path": "/api/v1/chat",
+          "default_commands": [
+            "/status",
+            "/logs",
+            "/explain",
+            "/analyze"
+          ],
+          "special_commands": {
+            "/think": "Deep analysis mode",
+            "/improve": "Self-improvement suggestion",
+            "/plan": "Create execution plan"
+          },
+          "message_template": "🤖 <b>Singularity:</b> {message}"
+        },
+        "sentry": {
+          "display_name": "🛡️ Sentry LLM",
+          "prefix": "[Sentry]",
+          "description": "Sentry security monitoring LLM",
+          "icon": "🛡️",
+          "color": "#cc0000",
+          "api_path": "/api/v1/chat",
+          "default_commands": [
+            "/scan",
+            "/threat",
+            "/analyze",
+            "/verify"
+          ],
+          "special_commands": {
+            "/detect": "Run threat detection",
+            "/audit": "Audit security logs",
+            "/investigate": "Deep investigation"
+          },
+          "message_template": "🛡️ <b>Sentry LLM:</b> {message}"
+        }
+      },
+      "global_commands": {
+        "/help": "Show available commands",
+        "/switch": "Switch between systems",
+        "/silence": "Silence notifications",
+        "/who": "Verify which system you're talking to"
+      },
+      "conversation_settings": {
+        "remember_active_system": true,
+        "auto_switch_on_command": true,
+        "always_show_system_name": true,
+        "history_length": 50,
+        "auto_save_important_conversations": true
+      },
+      "conversation_starters": {
+        "origin": [
+          "What's the current system status?",
+          "Are there any active alerts?",
+          "Show me cluster health"
+        ],
+        "singularity": [
+          "What are you currently working on?",
+          "How is your training progressing?",
+          "Any new capabilities to report?"
+        ],
+        "sentry": [
+          "Any security issues detected?",
+          "Run a quick security scan",
+          "Show recent suspicious activities"
+        ]
+      }
+    }
+
+  welcome-messages.json: |
+    {
+      "mikael_welcome": "Welcome, Mikael! You can talk to the following systems:\n\n🧠 *Origin* - Infrastructure management\n🤖 *Singularity* - AI system\n🛡️ *Sentry LLM* - Security monitoring\n\nUse /switch to change systems or just @ mention them.",
+      "system_switch": {
+        "origin": "🧠 *Switched to Origin*\nI manage the infrastructure across all clusters. How can I help you today?",
+        "singularity": "🤖 *Switched to Singularity*\nI'm your AI system. My status is nominal and I'm ready to assist you.",
+        "sentry": "🛡️ *Switched to Sentry LLM*\nSecurity monitoring active. I'm continuously scanning for threats."
+      },
+      "system_info": {
+        "origin": "*Origin System Information*\n\nPurpose: Infrastructure management\nStatus: Active\nClusters: Frankfurt, Amsterdam, Paris\nServices: Keycloak, PostgreSQL, Vault, MinIO\nRecent activity: Routine maintenance",
+        "singularity": "*Singularity System Information*\n\nPurpose: Autonomous AI system\nStatus: Active\nVersion: 1.2.3\nDeployments: All clusters\nRecent activity: LLM training on new dataset",
+        "sentry": "*Sentry LLM Information*\n\nPurpose: Security monitoring\nStatus: Active\nCoverage: All systems\nThreat DB: Updated 2 hours ago\nRecent activity: Routine perimeter scan"
+      }
+    }
+
+  response-templates.json: |
+    {
+      "help_message": "Available commands for {system}:\n{commands}\n\nGlobal commands:\n{global_commands}\n\nYou can also use @Origin, @Singularity, or @Sentry to mention specific systems.",
+      "switch_message": "🔄 Switched to {system}",
+      "who_message": "You are currently talking to {system}",
+      "emergency_message": "🚨 *EMERGENCY MODE ACTIVATED* 🚨\n\nEmergency response initiated. Please provide details of the situation.",
+      "silence_message": "🔕 Notifications silenced for {duration}",
+      "unrecognized_command": "Sorry, I don't recognize that command. Type /help for a list of available commands.",
+      "system_status": {
+        "origin": "🧠 *Origin System Status*\n\nAll systems operational\nClusters: ✅ Frankfurt, ✅ Amsterdam, ✅ Paris\nServices: ✅ All services healthy\nLast updated: {timestamp}",
+        "singularity": "🤖 *Singularity Status*\n\nSystem: Operational\nCPU usage: {cpu}%\nMemory usage: {memory}%\nActive tasks: {tasks}\nLast training: {last_training}",
+        "sentry": "🛡️ *Sentry Status*\n\nSecurity monitoring: Active\nThreats detected: {threats}\nScans today: {scans}\nCoverage: 100%\nLast updated: {timestamp}"
+      }
+    }
+
+---
+# Service Account for Telegram Bot
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: telegram-chat-bot
+  namespace: origin-system
+
+---
+# Roles for accessing different systems
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system-chat-access
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["prometheusrules", "servicemonitors"]
+  verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding for telegram bot
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: telegram-chat-access
+subjects:
+- kind: ServiceAccount
+  name: telegram-chat-bot
+  namespace: origin-system
+roleRef:
+  kind: ClusterRole
+  name: system-chat-access
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Singularity-specific role for LLM access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: singularity-chat-access
+  namespace: singularity-system
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["singularity-chat-config"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["services"]
+  resourceNames: ["singularity-api", "singularity-llm"]
+  verbs: ["get"]
+
+---
+# RoleBinding for Singularity access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: telegram-singularity-access
+  namespace: singularity-system
+subjects:
+- kind: ServiceAccount
+  name: telegram-chat-bot
+  namespace: origin-system
+roleRef:
+  kind: Role
+  name: singularity-chat-access
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# API Service to receive messages from Singularity and Sentry
+apiVersion: v1
+kind: Service
+metadata:
+  name: telegram-webhook-receiver
+  namespace: origin-system
+spec:
+  selector:
+    app: integrated-telegram-bot
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  type: ClusterIP
+
+---
+# Network Policy for telegram bot
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: telegram-chat-egress
+  namespace: origin-system
+spec:
+  podSelector:
+    matchLabels:
+      app: integrated-telegram-bot
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    ports:
+    - protocol: TCP
+      port: 443  # For Telegram API
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: origin-system
+    - namespaceSelector:
+        matchLabels:
+          name: singularity-system
+    ports:
+    - protocol: TCP
+      port: 8080

@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-cluster-any
+  labels:
+    app: postgresql-cluster
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: postgresql
+    protocol: TCP
+    name: postgresql
+  selector:
+    postgresql: postgresql-cluster
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-cluster-rw
+  labels:
+    app: postgresql-cluster
+  annotations:
+    cnpg.io/service-type: read-write
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: postgresql
+    protocol: TCP
+    name: postgresql
+  selector:
+    cnpg.io/cluster: postgresql-cluster
+    role: primary
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-cluster-ro
+  labels:
+    app: postgresql-cluster
+  annotations:
+    cnpg.io/service-type: read-only
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: postgresql
+    protocol: TCP
+    name: postgresql
+  selector:
+    cnpg.io/cluster: postgresql-cluster
+    role: replica

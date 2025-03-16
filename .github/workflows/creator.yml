@@ -1,34 +1,127 @@
-name: Build and Push Genesis
+name: Genesis Administration
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'Dockerfile'
-      - '.github/workflows/build-genesis.yml'
-      - 'genesis/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+      - 'keys/**'
+      - 'config/**'
   workflow_dispatch:
+    inputs:
+      task:
+        description: 'Admin task to perform'
+        required: true
+        default: 'sync-secrets'
+        type: choice
+        options:
+          - sync-secrets
+          - rotate-keys
+          - update-permissions
+          - tailscale-auth
+          - provision-resources
+          - manage-users
 
 jobs:
-  build:
-    runs-on: self-hosted # Uses the Origin runner
+  admin-task:
+    runs-on: [self-hosted, Linux, Docker, X64, builder]
+    environment: admin-control
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ADMIN_PAT }}
 
-      - name: Log in to Container Registry
+      - name: Setup Admin Tools
         run: |
-          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ghcr.io -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+          # Install required tools
+          sudo apt-get update
+          sudo apt-get install -y jq curl wget
+          
+          # GitHub CLI setup
+          if ! command -v gh &> /dev/null; then
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update
+            sudo apt install gh -y
+          fi
+          
+          # Authenticate with GitHub
+          echo "${{ secrets.ADMIN_PAT }}" | gh auth login --with-token
 
-      - name: Build Genesis Docker Image
+      - name: Execute Admin Task
+        id: admin-task
         run: |
-          docker build -t ghcr.io/org/genesis:latest .
-
-      - name: Push Image to Registry
+          # Determine which task to run
+          TASK="${{ github.event.inputs.task || 'sync-secrets' }}"
+          echo "Running admin task: $TASK"
+          
+          case "$TASK" in
+            sync-secrets)
+              # Sync secrets to other repositories
+              echo "Syncing secrets from Genesis to other repositories"
+              ./scripts/sync-secrets.sh
+              ;;
+              
+            rotate-keys)
+              # Rotate API keys and tokens
+              echo "Rotating API keys and other sensitive credentials"
+              ./scripts/rotate-keys.sh
+              ;;
+              
+            update-permissions)
+              # Update GitHub repo permissions
+              echo "Updating repository permissions"
+              ./scripts/update-permissions.sh
+              ;;
+              
+            tailscale-auth)
+              # Manage Tailscale authentication
+              echo "Managing Tailscale authentication"
+              ./scripts/tailscale-auth.sh
+              ;;
+              
+            provision-resources)
+              # Provision infrastructure resources
+              echo "Provisioning infrastructure resources"
+              ./scripts/provision-resources.sh
+              ;;
+            
+            manage-users)
+              # Manage user accounts
+              echo "Managing user accounts and permissions"
+              ./scripts/manage-users.sh list
+              ;;
+              
+            *)
+              echo "Unknown task: $TASK"
+              exit 1
+              ;;
+          esac
+      
+      - name: Report Status
+        if: always()
         run: |
-          docker push ghcr.io/org/genesis:latest
-
-      - name: Clean Up Local Docker Cache
-        run: |
-          docker image prune -f
+          # Send notification about task status
+          STATUS="${{ job.status }}"
+          REPO="${{ github.repository }}"
+          SHA="${{ github.sha }}"
+          
+          echo "Task execution status: $STATUS"
+          
+          # Log to audit trail
+          echo "$(date -u): Task '${TASK}' completed with status '${STATUS}'" >> audit_log.txt
+          
+          # Commit audit log if changes were made
+          if git diff --quiet audit_log.txt; then
+            echo "No changes to audit log"
+          else
+            git config --global user.name "dnd-genesis"
+            git config --global user.email "203321379+dnd-genesis@users.noreply.github.com"
+            git add audit_log.txt
+            git commit -m "Update audit log [skip ci]"
+            git push
+          fi

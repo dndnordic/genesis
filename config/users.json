@@ -1,0 +1,32 @@
+{
+  "users": [
+    {
+      "name": "dnd-genesis",
+      "email": "203321379+dnd-genesis@users.noreply.github.com",
+      "role": "admin",
+      "repositories": ["genesis", "origin", "singularity"],
+      "permissions": "admin"
+    },
+    {
+      "name": "dnd-origin",
+      "email": "203493622+dnd-origin@users.noreply.github.com",
+      "role": "bot",
+      "repositories": ["origin"],
+      "permissions": "write"
+    },
+    {
+      "name": "dnd-singularity",
+      "email": "203457483+dnd-singularity@users.noreply.github.com",
+      "role": "bot",
+      "repositories": ["singularity"],
+      "permissions": "write"
+    },
+    {
+      "name": "mikki",
+      "email": "mikael@dndnordic.se",
+      "role": "admin",
+      "repositories": ["genesis", "origin", "singularity"],
+      "permissions": "admin"
+    }
+  ]
+}

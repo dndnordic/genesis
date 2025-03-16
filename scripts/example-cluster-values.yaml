@@ -1,0 +1,91 @@
+# Example cluster values for Origin Redundant Services
+# This file should be provided to the Origin repository as a reference
+# Actual secrets will be injected via the secrets sync mechanism
+
+# Keycloak Configuration
+keycloak:
+  # No sensitive data here - just cluster-specific settings
+  hostname:
+    alpha: keycloak.alpha.origin-system.svc.cluster.local
+    beta: keycloak.beta.origin-system.svc.cluster.local
+    gamma: keycloak.gamma.origin-system.svc.cluster.local
+  replicas: 2
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 500m
+    limits:
+      memory: 1Gi
+      cpu: 1000m
+  cache:
+    owners: 2
+    segments: 60
+  # Using MinIO for cache clustering
+  infinispan:
+    storage: minio
+    minio:
+      bucket: keycloak-clustering
+
+# PostgreSQL Configuration
+postgresql:
+  # No sensitive data here - just cluster-specific settings
+  instances: 3
+  storage:
+    size: 10Gi
+    storageClass: standard
+  clusters:
+    alpha:
+      nodeSelector:
+        kubernetes.io/hostname: alpha-worker-1
+    beta:
+      nodeSelector:
+        kubernetes.io/hostname: beta-worker-1
+    gamma:
+      nodeSelector:
+        kubernetes.io/hostname: gamma-worker-1
+  backup:
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    retention: 7           # Keep backups for 7 days
+    
+# MinIO Configuration (S3-compatible Storage)
+minio:
+  replicas: 4  # Distributed across clusters for HA
+  persistence:
+    size: 50Gi
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: 500m
+  buckets:
+    - name: keycloak-clustering
+      policy: none
+      purge: false
+    - name: origin-backups
+      policy: none
+      purge: false
+    - name: postgres-backups
+      policy: none
+      purge: false
+
+# Vault Configuration
+vault:
+  # No sensitive data here - just cluster-specific settings
+  hostname:
+    alpha: vault.alpha.origin-system.svc.cluster.local
+    beta: vault.beta.origin-system.svc.cluster.local
+    gamma: vault.gamma.origin-system.svc.cluster.local
+  replicas: 3
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+  storage:
+    size: 5Gi
+  ui:
+    enabled: true

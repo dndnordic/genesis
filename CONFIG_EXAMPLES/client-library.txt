@@ -1,0 +1,82 @@
+# Singularity Client Library for Origin Services
+
+This document provides implementation guidance for a client library that Singularity should use to interact with Origin services.
+
+## Service Discovery
+
+Singularity should implement a client library that handles:
+
+1. Service discovery via the consolidated API endpoint
+2. Automatic failover between clusters
+3. Connection retry with exponential backoff
+4. Circuit breaking for failed services
+
+## Usage Example
+
+```python
+from origin_client import OriginClient
+
+# Initialize client with service discovery endpoint
+client = OriginClient(
+    discovery_endpoint="http://service-discovery.origin-system.svc.cluster.local:8080/api/v1/services",
+    auth_token=os.environ.get("VAULT_CLIENT_TOKEN")
+)
+
+# Use any service with automatic discovery and failover
+storage_client = client.get_service("storage")
+data = storage_client.get_object("my-bucket", "my-object")
+
+# Or access specific service directly
+vault_client = client.get_service("secrets")
+secret = vault_client.get_secret("path/to/secret")
+```
+
+## Connection Strategy
+
+1. First connect to local cluster services
+2. On failure, try the primary cluster (if not already on primary)
+3. Finally try any available backup cluster
+4. Implement exponential backoff for retries
+5. Cache service discovery information with TTL of 5 minutes
+
+## Error Handling
+
+1. Handle connection errors with proper fallback
+2. Track service health status
+3. Implement circuit breaker pattern for failing services
+4. Log all connection issues and failovers
+
+## Authentication
+
+1. Use service account token for service-to-service authentication
+2. For Vault access, use the provided client token
+3. For other services, use mutual TLS with service identity
+
+## Configuration Options
+
+The client library should support:
+
+1. Local caching of service discovery information
+2. Custom retry policies
+3. Timeout configurations
+4. Health check intervals
+5. Custom service endpoints for testing
+
+## State Management
+
+The client library should maintain:
+
+1. Current health status of all services
+2. Last successful connection time per service
+3. Failed attempt counts
+4. Current primary and backup service endpoints
+
+## Implementation Recommendations
+
+Use:
+
+1. `requests` or `httpx` for HTTP connections
+2. Circuit breaker pattern (like `pybreaker`)
+3. `mTLS` for secure service-to-service communication
+4. JSON for service discovery parsing
+5. Async support for non-blocking operations

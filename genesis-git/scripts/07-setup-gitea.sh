@@ -12,7 +12,17 @@ else
     # Install Gitea
     echo "Downloading Gitea..."
     export GITEA_VERSION="1.19.3"
-    wget -O /usr/local/bin/gitea https://dl.gitea.io/gitea/${GITEA_VERSION}/gitea-${GITEA_VERSION}-linux-amd64
+    
+    # Check if wget is installed, if not try curl
+    if command -v wget &> /dev/null; then
+        wget -O /usr/local/bin/gitea https://dl.gitea.io/gitea/${GITEA_VERSION}/gitea-${GITEA_VERSION}-linux-amd64
+    elif command -v curl &> /dev/null; then
+        curl -L https://dl.gitea.io/gitea/${GITEA_VERSION}/gitea-${GITEA_VERSION}-linux-amd64 -o /usr/local/bin/gitea
+    else
+        echo "Error: Neither wget nor curl is installed. Please install one of them and try again."
+        exit 1
+    fi
+    
     chmod +x /usr/local/bin/gitea
 fi
 
